@@ -187,86 +187,238 @@ follow_up.update({'risk_score': baseline['risk_score']*0.6,
 print("📈 Intervention Effectiveness:")
 st.dataframe(pd.DataFrame([evaluate_impact(baseline, follow_up)]))
 
-# ... (keep all your previous code until the last part)
+# -- coding: utf-8 --
+import streamlit as st
+import pandas as pd
+import numpy as np
+import pickle
+from datetime import datetime
+import tempfile
+import os
+
+# Set page config
+st.set_page_config(
+    page_title="OH-FGS Risk Prediction",
+    page_icon="🦠",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS
+st.markdown("""
+<style>
+    .main {background-color: #f5f5f5;}
+    .stAlert {padding: 20px; border-radius: 10px;}
+    .high-risk {background-color: #ffcccc; padding: 10px; border-radius: 5px;}
+    .medium-risk {background-color: #fff3cd; padding: 10px; border-radius: 5px;}
+    .low-risk {background-color: #d4edda; padding: 10px; border-radius: 5px;}
+    .header {color: #2c3e50;}
+    .stTextInput>div>div>input {background-color: #f0f2f6;}
+</style>
+""", unsafe_allow_html=True)
+
+# Load model
+@st.cache_resource
+def load_model():
+    try:
+        with open('schisto_risk_model.pkl', 'rb') as f:
+            model = pickle.load(f)
+        return model
+    except Exception as e:
+        st.error(f"Failed to load model: {str(e)}")
+        return None
+
+model = load_model()
+
+# Expected features
+FEATURES = [
+    'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
+    'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
+    'Biomph', 'circ_score', 'Village', 'Site', 'Date'
+]
+
+# Initialize session state for data storage
+if 'saved_data' not in st.session_state:
+    st.session_state.saved_data = pd.DataFrame(columns=FEATURES + ['Risk_Level', 'Risk_Probability'])
+
+# Data entry form
+def individual_entry_form():
+    with st.form("individual_entry"):
+        st.subheader("Individual Data Entry")
+        
+        cols = st.columns(3)
+        with cols[0]:
+            village = st.text_input("Village Name", "Diokhor")
+            site = st.text_input("Site Number", "1")
+            date = st.date_input("Date", datetime.today())
+            n_ShInfection = st.number_input("Number of Infections", min_value=0, value=10)
+            mean_ShEgg = st.number_input("Mean Egg Count", min_value=0.0, value=5.2)
+        
+        with cols[1]:
+            n_female = st.number_input("Number of Females", min_value=0, value=15)
+            pop = st.number_input("Population", min_value=0, value=200)
+            lake_yn = st.selectbox("Lake Present", ["Yes", "No"], index=0)
+            distance = st.number_input("Distance to Water (m)", min_value=0, value=500)
+            floating_veg = st.selectbox("Floating Vegetation", ["Low", "Medium", "High"], index=1)
+        
+        with cols[2]:
+            depth = st.number_input("Water Depth (m)", min_value=0.0, value=1.5)
+            width_shore = st.number_input("Shore Width (m)", min_value=0.0, value=10.0)
+            bulinus = st.number_input("Bulinus Count", min_value=0, value=20)
+            biomph = st.number_input("Biomph Count", min_value=0, value=5)
+            circ_score = st.number_input("Circularity Score", min_value=0.0, max_value=1.0, value=0.7)
+        
+        submitted = st.form_submit_button("Submit & Predict")
+        
+        if submitted:
+            # Prepare data
+            data = {
+                'Village': village,
+                'Site': site,
+                'Date': date.strftime('%Y-%m-%d'),
+                'n_ShInfection': n_ShInfection,
+                'mean_ShEgg': mean_ShEgg,
+                'n_female': n_female,
+                'Pop': pop,
+                'LakeYN': 1 if lake_yn == "Yes" else 0,
+                'distance': distance,
+                'FloatingVeg': ["Low", "Medium", "High"].index(floating_veg) + 1,
+                'Depth': depth,
+                'width_shore': width_shore,
+                'Bulinus': bulinus,
+                'Biomph': biomph,
+                'circ_score': circ_score
+            }
+            
+            # Make prediction
+            features = pd.DataFrame([data])[FEATURES[:-3]]  # Exclude metadata columns
+            proba = model.predict_proba(features)[0][1]
+            risk_level = "High" if proba > 0.7 else "Medium" if proba > 0.3 else "Low"
+            
+            # Add to session data
+            data.update({
+                'Risk_Level': risk_level,
+                'Risk_Probability': proba
+            })
+            
+            new_row = pd.DataFrame([data])
+            st.session_state.saved_data = pd.concat([st.session_state.saved_data, new_row], ignore_index=True)
+            
+            # Show result
+            st.success("Data submitted successfully!")
+            st.write(f"Predicted Risk: **{risk_level}** (Probability: {proba:.2%})")
+
+# File upload function
+def bulk_upload():
+    st.subheader("Bulk Data Upload")
+    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
+    
+    if uploaded_file is not None:
+        try:
+            new_data = pd.read_csv(uploaded_file)
+            
+            # Validate columns
+            missing_cols = [col for col in FEATURES[:-3] if col not in new_data.columns]
+            if missing_cols:
+                st.error(f"Missing required columns: {', '.join(missing_cols)}")
+                return
+            
+            # Make predictions
+            features = new_data[FEATURES[:-3]]
+            probas = model.predict_proba(features)[:, 1]
+            risk_levels = ["High" if p > 0.7 else "Medium" if p > 0.3 else "Low" for p in probas]
+            
+            # Add to session data
+            new_data['Risk_Level'] = risk_levels
+            new_data['Risk_Probability'] = probas
+            
+            # Add missing metadata columns if needed
+            for col in ['Village', 'Site', 'Date']:
+                if col not in new_data.columns:
+                    new_data[col] = "Unknown"
+            
+            st.session_state.saved_data = pd.concat([st.session_state.saved_data, new_data], ignore_index=True)
+            st.success(f"Successfully added {len(new_data)} records!")
+            
+        except Exception as e:
+            st.error(f"Error processing file: {str(e)}")
+
+# DHIS2 export format
+def format_for_dhis2(df):
+    dhis2_format = df.copy()
+    
+    # Add required DHIS2 columns
+    dhis2_format['orgUnit'] = dhis2_format['Village']
+    dhis2_format['period'] = pd.to_datetime(dhis2_format['Date']).dt.strftime('%Y%m')
+    dhis2_format['dataSet'] = 'SCHISTO_RISK'
+    
+    # Map to DHIS2 data elements
+    indicator_mapping = {
+        'n_ShInfection': 'SCHISTO_CASES',
+        'Bulinus': 'SNAIL_COUNT_BULINUS',
+        'Risk_Level': 'RISK_LEVEL',
+        'Risk_Probability': 'RISK_SCORE'
+    }
+    
+    # Create DHIS2 compatible format
+    melted = pd.melt(dhis2_format, 
+                    id_vars=['orgUnit', 'period', 'dataSet', 'Site'],
+                    value_vars=list(indicator_mapping.keys()),
+                    var_name='dataElement',
+                    value_name='value')
+    
+    # Map to DHIS2 element codes
+    melted['dataElement'] = melted['dataElement'].map(indicator_mapping)
+    
+    return melted[['dataElement', 'period', 'orgUnit', 'dataSet', 'Site', 'value']]
 
 # Main app
 def main():
-    st.title("🦠 OH-FGS Risk Prediction System")
-    st.markdown("""
-        This system predicts the risk of schistosomiasis infection based on environmental and demographic factors.
-        Upload your data below to get predictions and visualize risk areas.
-    """)
-
-    # File upload
-    uploaded_file = st.file_uploader("Upload CSV file with schistosomiasis risk factors", type=['csv'])
-
-    if uploaded_file is not None:
-        # Process data
-        df = process_data(uploaded_file)
-
-        if df is not None:
-            st.success("Data successfully loaded!")
-
-            # Show preview
-            st.subheader("Data Preview")
-            st.write(df.head())
-
-            # Make predictions
-            st.subheader("Risk Prediction")
-            if st.button("Run Predictions"):
-                with st.spinner("Making predictions..."):
-                    result_df = make_predictions(df)
-
-                    if result_df is not None:
-                        st.success("Predictions completed!")
-
-                        # Show results
-                        st.write(result_df[['Risk_Prediction', 'Risk_Probability', 'Risk_Level']].head())
-
-                        # Risk summary
-                        st.subheader("Risk Distribution")
-                        risk_counts = result_df['Risk_Level'].value_counts()
-                        st.bar_chart(risk_counts)
-
-                        # Show high risk alerts
-                        high_risk = result_df[result_df['Risk_Level'] == 'High']
-                        if not high_risk.empty:
-                            st.subheader("🚨 High Risk Alerts")
-                            st.write(f"Found {len(high_risk)} high risk locations:")
-                            st.dataframe(high_risk[EXPECTED_FEATURES + ['Risk_Probability']])
-
-                        # Download results
-                        st.subheader("Download Results")
-                        csv = result_df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="Download Predictions",
-                            data=csv,
-                            file_name="schisto_risk_predictions.csv",
-                            mime="text/csv"
-                        )
-
-    # Sidebar with information
-    st.sidebar.title("About")
-    st.sidebar.info("""
-        *Schistosomiasis Risk Prediction System*
-        This tool uses machine learning to predict the risk of schistosomiasis infection based on environmental factors.
-
-        Expected features in your data:
-        - n_ShInfection
-        - mean_ShEgg
-        - n_female
-        - Pop
-        - LakeYN
-        - distance
-        - FloatingVeg
-        - Depth
-        - width_shore
-        - Bulinus
-        - Biomph
-        - circ_score
-
-        For mapping functionality, include latitude/longitude columns.
-    """)
+    st.title("🌍 OH-FGS Schistosomiasis Risk Prediction")
+    
+    tab1, tab2, tab3 = st.tabs(["Individual Entry", "Bulk Upload", "Saved Data"])
+    
+    with tab1:
+        individual_entry_form()
+    
+    with tab2:
+        bulk_upload()
+    
+    with tab3:
+        st.subheader("Collected Data")
+        
+        if not st.session_state.saved_data.empty:
+            st.dataframe(st.session_state.saved_data)
+            
+            # Export options
+            st.subheader("Export Data")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                # CSV export
+                csv = st.session_state.saved_data.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="Download Full Data (CSV)",
+                    data=csv,
+                    file_name=f"schisto_data_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
+                )
+            
+            with col2:
+                # DHIS2 export
+                if st.button("Prepare DHIS2 Export"):
+                    dhis2_data = format_for_dhis2(st.session_state.saved_data)
+                    csv_dhis2 = dhis2_data.to_csv(index=False).encode('utf-8')
+                    
+                    st.download_button(
+                        label="Download DHIS2 Format",
+                        data=csv_dhis2,
+                        file_name=f"schisto_dhis2_export_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+                    st.write("DHIS2 compatible format ready for import")
+        else:
+            st.info("No data collected yet. Use the Individual Entry or Bulk Upload tabs to add data.")
 
 if __name__ == "__main__":
     main()
