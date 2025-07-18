@@ -190,168 +190,109 @@ st.dataframe(pd.DataFrame([evaluate_impact(baseline, follow_up)]))
 # -- coding: utf-8 --
 import streamlit as st
 import pandas as pd
-import numpy as np
 import pickle
 from datetime import datetime
-import tempfile
-import os
-import smtplib
-from email.mime.text import MIMEText
 
 # Set page config
 st.set_page_config(
     page_title="OH-FGS Risk Prediction",
     page_icon="🦠",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="centered"
 )
 
-# Custom CSS
+# Custom risk display styles
 st.markdown("""
 <style>
-    .main {background-color: #f5f5f5;}
-    .stAlert {padding: 20px; border-radius: 10px;}
-    .high-risk {background-color: #ffcccc; padding: 10px; border-radius: 5px;}
-    .medium-risk {background-color: #fff3cd; padding: 10px; border-radius: 5px;}
-    .low-risk {background-color: #d4edda; padding: 10px; border-radius: 5px;}
-    .header {color: #2c3e50;}
-    .stTextInput>div>div>input {background-color: #f0f2f6;}
+    .risk-high {
+        background-color: #ffdddd;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+    }
+    .risk-medium {
+        background-color: #fff3cd;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+    }
+    .risk-low {
+        background-color: #ddffdd;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Load model
-@st.cache_resource
-def load_model():
+# Model loading - only when needed for prediction
+def get_model():
     try:
         with open('schisto_risk_model.pkl', 'rb') as f:
-            model = pickle.load(f)
-        return model
+            return pickle.load(f)
+    except FileNotFoundError:
+        st.error("Model file not found. Please ensure 'schisto_risk_model.pkl' exists.")
+        return None
     except Exception as e:
-        st.error(f"Failed to load model: {str(e)}")
+        st.error(f"Error loading model: {str(e)}")
         return None
 
-model = load_model()
-
-# Expected features
-FEATURES = [
+# Prediction features
+PREDICTION_FEATURES = [
     'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
     'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
-    'Biomph', 'circ_score', 'Village', 'Site', 'Date'
+    'Biomph', 'circ_score'
 ]
 
-# Initialize session state for data storage
-if 'saved_data' not in st.session_state:
-    st.session_state.saved_data = pd.DataFrame(columns=FEATURES + ['Risk_Level', 'Risk_Probability'])
-
-# Email alert function
-def send_email(recipient, subject, message):
+# Main prediction function
+def predict_risk(input_data):
+    model = get_model()
+    if not model:
+        return None, None
+    
     try:
-        # Configure your email server details
-        smtp_server = "smtp.gmail.com"
-        port = 587
-        sender_email = "your_email@gmail.com"  # Replace with your email
-        password = "your_password"           # Replace with your password
-        
-        msg = MIMEText(message)
-        msg['Subject'] = subject
-        msg['From'] = sender_email
-        msg['To'] = recipient
-        
-        with smtplib.SMTP(smtp_server, port) as server:
-            server.starttls()
-            server.login(sender_email, password)
-            server.send_message(msg)
-            
-        st.success(f"Alert email sent to {recipient}")
+        features = pd.DataFrame([input_data])[PREDICTION_FEATURES]
+        proba = model.predict_proba(features)[0][1]
+        risk_level = "High" if proba > 0.7 else "Medium" if proba > 0.3 else "Low"
+        return risk_level, proba
     except Exception as e:
-        st.error(f"Failed to send email: {str(e)}")
+        st.error(f"Prediction error: {str(e)}")
+        return None, None
 
-def generate_intervention_plan(village_data):
-    risk_level = village_data['Risk_Level']
-    interventions = {
-        'High': [
-            "Immediate mass drug administration (MDA) with praziquantel",
-            "Intensive snail control measures (mollusciciding)",
-            "Community-wide health education campaign",
-            "Water source improvement or alternative water provision",
-            "Weekly monitoring for 4 weeks"
-        ],
-        'Medium': [
-            "Targeted treatment of high-risk groups",
-            "Focal snail control in high-transmission areas",
-            "Community health education sessions",
-            "Improved sanitation facilities",
-            "Monthly monitoring for 3 months"
-        ],
-        'Low': [
-            "Health education in schools and community centers",
-            "Passive surveillance through health facilities",
-            "Environmental modification to reduce snail habitats",
-            "Quarterly monitoring"
-        ]
-    }
-    return "\n- ".join([""] + interventions.get(risk_level, []))
-
-def send_stakeholder_alerts(village_data, risk_level):
-    # Single recipient (modify this to your target email)
-    recipient_email = "health_authority@example.com"
-
-    # Compose the alert message
-    message = f"""
-    🚨 SCHISTOSOMIASIS ALERT - {village_data['Village']} 🚨
-    Risk Level: {risk_level}
-    Risk Score: {village_data['Risk_Probability']:.2f}
-
-    📍 Location: Site {village_data['Site']}
-    📊 Metrics:
-    - Infected Individuals: {village_data['n_ShInfection']}
-    - Bulinus Snail Count: {village_data['Bulinus']}
-    - Water Contact Risk: {village_data['distance']}m from village
-
-    ⚠ Recommended Actions:
-    {generate_intervention_plan(village_data)}
-
-    📅 Next Assessment: {pd.Timestamp.now() + pd.Timedelta(days=7)}
-    """
-
-    # Send email
-    send_email(recipient_email, f"SCHISTO ALERT: {risk_level} Risk Detected", message)
-
-# Data entry form
-def individual_entry_form():
-    with st.form("individual_entry"):
-        st.subheader("Individual Data Entry")
+# Data input form
+def show_input_form():
+    with st.form("risk_form"):
+        st.header("Enter Case Information")
         
-        cols = st.columns(3)
-        with cols[0]:
-            village = st.text_input("Village Name", "Diokhor")
-            site = st.text_input("Site Number", "1")
-            date = st.date_input("Date", datetime.today())
-            n_ShInfection = st.number_input("Number of Infections", min_value=0, value=10)
-            mean_ShEgg = st.number_input("Mean Egg Count", min_value=0.0, value=5.2)
+        # Basic info
+        village = st.text_input("Village Name", "Diokhor")
+        date = st.date_input("Assessment Date", datetime.today())
         
-        with cols[1]:
-            n_female = st.number_input("Number of Females", min_value=0, value=15)
-            pop = st.number_input("Population", min_value=0, value=200)
-            lake_yn = st.selectbox("Lake Present", ["Yes", "No"], index=0)
+        # Health metrics
+        st.subheader("Health Indicators")
+        n_ShInfection = st.number_input("Number of Infections", min_value=0, value=5)
+        mean_ShEgg = st.number_input("Mean Egg Count", min_value=0.0, value=2.5)
+        n_female = st.number_input("Female Population at Risk", min_value=0, value=15)
+        pop = st.number_input("Total Population", min_value=0, value=100)
+        
+        # Environmental factors
+        st.subheader("Environmental Factors")
+        col1, col2 = st.columns(2)
+        with col1:
+            lake_yn = st.selectbox("Lake Present", ["Yes", "No"])
             distance = st.number_input("Distance to Water (m)", min_value=0, value=500)
-            floating_veg = st.selectbox("Floating Vegetation", ["Low", "Medium", "High"], index=1)
+            floating_veg = st.selectbox("Floating Vegetation", ["Low", "Medium", "High"])
+        with col2:
+            depth = st.number_input("Water Depth (m)", min_value=0.0, value=1.2)
+            width_shore = st.number_input("Shore Width (m)", min_value=0.0, value=8.0)
+            circ_score = st.slider("Water Circularity", 0.0, 1.0, 0.6)
         
-        with cols[2]:
-            depth = st.number_input("Water Depth (m)", min_value=0.0, value=1.5)
-            width_shore = st.number_input("Shore Width (m)", min_value=0.0, value=10.0)
-            bulinus = st.number_input("Bulinus Count", min_value=0, value=20)
-            biomph = st.number_input("Biomph Count", min_value=0, value=5)
-            circ_score = st.number_input("Circularity Score", min_value=0.0, max_value=1.0, value=0.7)
+        # Vector information
+        st.subheader("Snail Vector Counts")
+        bulinus = st.number_input("Bulinus Snails", min_value=0, value=15)
+        biomph = st.number_input("Biomph Snails", min_value=0, value=3)
         
-        submitted = st.form_submit_button("Submit & Predict")
-        
-        if submitted:
-            # Prepare data
-            data = {
-                'Village': village,
-                'Site': site,
-                'Date': date.strftime('%Y-%m-%d'),
+        if st.form_submit_button("Assess Risk"):
+            input_data = {
                 'n_ShInfection': n_ShInfection,
                 'mean_ShEgg': mean_ShEgg,
                 'n_female': n_female,
@@ -363,178 +304,29 @@ def individual_entry_form():
                 'width_shore': width_shore,
                 'Bulinus': bulinus,
                 'Biomph': biomph,
-                'circ_score': circ_score
+                'circ_score': circ_score,
+                'Village': village,
+                'Date': date
             }
             
-            # Make prediction
-            features = pd.DataFrame([data])[FEATURES[:-3]]  # Exclude metadata columns
-            proba = model.predict_proba(features)[0][1]
-            risk_level = "High" if proba > 0.7 else "Medium" if proba > 0.3 else "Low"
+            risk_level, risk_proba = predict_risk(input_data)
             
-            # Add to session data
-            data.update({
-                'Risk_Level': risk_level,
-                'Risk_Probability': proba
-            })
-            
-            new_row = pd.DataFrame([data])
-            st.session_state.saved_data = pd.concat([st.session_state.saved_data, new_row], ignore_index=True)
-            
-            # Show result
-            st.success("Data submitted successfully!")
-            risk_class = "high-risk" if risk_level == "High" else "medium-risk" if risk_level == "Medium" else "low-risk"
-            st.markdown(f'<div class="{risk_class}">Predicted Risk: <strong>{risk_level}</strong> (Probability: {proba:.2%})</div>', unsafe_allow_html=True)
-            
-            # Send alert for high risk
-            if risk_level == "High":
-                send_stakeholder_alerts(data, risk_level)
-
-# File upload function
-def bulk_upload():
-    st.subheader("Bulk Data Upload")
-    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
-    
-    if uploaded_file is not None:
-        try:
-            new_data = pd.read_csv(uploaded_file)
-            
-            # Validate columns
-            missing_cols = [col for col in FEATURES[:-3] if col not in new_data.columns]
-            if missing_cols:
-                st.error(f"Missing required columns: {', '.join(missing_cols)}")
-                return
-            
-            # Make predictions
-            features = new_data[FEATURES[:-3]]
-            probas = model.predict_proba(features)[:, 1]
-            risk_levels = ["High" if p > 0.7 else "Medium" if p > 0.3 else "Low" for p in probas]
-            
-            # Add to session data
-            new_data['Risk_Level'] = risk_levels
-            new_data['Risk_Probability'] = probas
-            
-            # Add missing metadata columns if needed
-            for col in ['Village', 'Site', 'Date']:
-                if col not in new_data.columns:
-                    new_data[col] = "Unknown"
-            
-            st.session_state.saved_data = pd.concat([st.session_state.saved_data, new_data], ignore_index=True)
-            st.success(f"Successfully added {len(new_data)} records!")
-            
-            # Check for high risk entries
-            high_risk_data = new_data[new_data['Risk_Level'] == "High"]
-            if not high_risk_data.empty:
-                st.warning(f"⚠ {len(high_risk_data)} high-risk locations detected!")
-                for _, row in high_risk_data.iterrows():
-                    send_stakeholder_alerts(row, "High")
-            
-        except Exception as e:
-            st.error(f"Error processing file: {str(e)}")
-
-# DHIS2 export format
-def format_for_dhis2(df):
-    dhis2_format = df.copy()
-    
-    # Add required DHIS2 columns
-    dhis2_format['orgUnit'] = dhis2_format['Village']
-    dhis2_format['period'] = pd.to_datetime(dhis2_format['Date']).dt.strftime('%Y%m')
-    dhis2_format['dataSet'] = 'SCHISTO_RISK'
-    
-    # Map to DHIS2 data elements
-    indicator_mapping = {
-        'n_ShInfection': 'SCHISTO_CASES',
-        'Bulinus': 'SNAIL_COUNT_BULINUS',
-        'Risk_Level': 'RISK_LEVEL',
-        'Risk_Probability': 'RISK_SCORE'
-    }
-    
-    # Create DHIS2 compatible format
-    melted = pd.melt(dhis2_format, 
-                    id_vars=['orgUnit', 'period', 'dataSet', 'Site'],
-                    value_vars=list(indicator_mapping.keys()),
-                    var_name='dataElement',
-                    value_name='value')
-    
-    # Map to DHIS2 element codes
-    melted['dataElement'] = melted['dataElement'].map(indicator_mapping)
-    
-    return melted[['dataElement', 'period', 'orgUnit', 'dataSet', 'Site', 'value']]
-
-# Track Intervention Effectiveness
-def evaluate_impact(baseline, follow_up):
-    improvement = {
-        'Risk Reduction': baseline['risk_score'] - follow_up['risk_score'],
-        'Case Reduction': (baseline['n_ShInfection'] - follow_up['n_ShInfection'])/baseline['n_ShInfection']*100,
-        'Snail Reduction': (baseline['Bulinus'] - follow_up['Bulinus'])/baseline['Bulinus']*100
-    }
-    return improvement
+            if risk_level:
+                risk_class = f"risk-{risk_level.lower()}"
+                st.markdown(
+                    f'<div class="{risk_class}">'
+                    f'<h2>Risk Assessment: {risk_level}</h2>'
+                    f'<p><strong>Probability:</strong> {risk_proba:.1%}</p>'
+                    f'<p><strong>Village:</strong> {village}</p>'
+                    f'<p><strong>Date:</strong> {date.strftime("%Y-%m-%d")}</p>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
 
 # Main app
 def main():
-    st.title("🌍 OH-FGS Schistosomiasis Risk Prediction")
-    
-    tab1, tab2, tab3 = st.tabs(["Individual Entry", "Bulk Upload", "Saved Data"])
-    
-    with tab1:
-        individual_entry_form()
-    
-    with tab2:
-        bulk_upload()
-    
-    with tab3:
-        st.subheader("Collected Data")
-        
-        if not st.session_state.saved_data.empty:
-            st.dataframe(st.session_state.saved_data)
-            
-            # Export options
-            st.subheader("Export Data")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                # CSV export
-                csv = st.session_state.saved_data.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Download Full Data (CSV)",
-                    data=csv,
-                    file_name=f"schisto_data_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
-            
-            with col2:
-                # DHIS2 export
-                if st.button("Prepare DHIS2 Export"):
-                    dhis2_data = format_for_dhis2(st.session_state.saved_data)
-                    csv_dhis2 = dhis2_data.to_csv(index=False).encode('utf-8')
-                    
-                    st.download_button(
-                        label="Download DHIS2 Format",
-                        data=csv_dhis2,
-                        file_name=f"schisto_dhis2_export_{datetime.now().strftime('%Y%m%d')}.csv",
-                        mime="text/csv"
-                    )
-                    st.write("DHIS2 compatible format ready for import")
-            
-            # Intervention evaluation
-            st.subheader("Intervention Evaluation")
-            village_select = st.selectbox("Select Village", st.session_state.saved_data['Village'].unique())
-            village_data = st.session_state.saved_data[st.session_state.saved_data['Village'] == village_select]
-            
-            if len(village_data) > 1:
-                baseline = village_data.iloc[0]
-                follow_up = village_data.iloc[-1]
-                
-                st.write("Baseline vs Follow-up Comparison")
-                comparison = evaluate_impact(baseline, follow_up)
-                st.dataframe(pd.DataFrame([comparison]))
-                
-                if comparison['Risk Reduction'] > 0:
-                    st.success("Intervention shows positive impact!")
-                else:
-                    st.warning("No improvement detected - consider revising intervention strategy")
-            
-        else:
-            st.info("No data collected yet. Use the Individual Entry or Bulk Upload tabs to add data.")
+    st.title("Schistosomiasis Outbreak Risk Assessment")
+    show_input_form()
 
 if __name__ == "__main__":
     main()
