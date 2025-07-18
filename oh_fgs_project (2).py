@@ -330,7 +330,7 @@ def get_interventions(risk_level):
 # ============================================
 def show_sidebar():
     with st.sidebar:
-        st.image("https://via.placeholder.com/150x50?text=OH-FGS", width=150)
+        st.image("https://th.bing.com/th/id/R.b80206269c11687dd551ff41d1e1c886?rik=1fYSLUyOVptxvw&riu=http%3a%2f%2fjobs.euractiv.com%2fsites%2fdefault%2ffiles%2fgiz.logo_.png&ehk=Nkk1QYwIMX6tvz8XcL2Qq5swnmOI%2fk5qgIO0tD14RD4%3d&risl=&pid=ImgRaw&r=0", width=150)
         st.markdown("## Navigation")
         page = st.radio("", ["Individual Assessment", "Bulk Processing", "Data Management"])
         
