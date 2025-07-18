@@ -197,43 +197,27 @@ from datetime import datetime
 st.set_page_config(
     page_title="OH-FGS Risk Prediction",
     page_icon="🦠",
-    layout="centered"
+    layout="wide"
 )
 
-# Custom risk display styles
+# Custom CSS
 st.markdown("""
 <style>
-    .risk-high {
-        background-color: #ffdddd;
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-    }
-    .risk-medium {
-        background-color: #fff3cd;
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-    }
-    .risk-low {
-        background-color: #ddffdd;
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-    }
+    .risk-high { background-color: #ffdddd; padding: 15px; border-radius: 10px; }
+    .risk-medium { background-color: #fff3cd; padding: 15px; border-radius: 10px; }
+    .risk-low { background-color: #d4edda; padding: 15px; border-radius: 10px; }
+    .stDataFrame { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
 
-# Model loading - only when needed for prediction
-def get_model():
+# Load model
+@st.cache_resource
+def load_model():
     try:
         with open('schisto_risk_model.pkl', 'rb') as f:
             return pickle.load(f)
-    except FileNotFoundError:
-        st.error("Model file not found. Please ensure 'schisto_risk_model.pkl' exists.")
-        return None
     except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
+        st.error(f"Model loading failed: {str(e)}")
         return None
 
 # Prediction features
@@ -243,56 +227,39 @@ PREDICTION_FEATURES = [
     'Biomph', 'circ_score'
 ]
 
-# Main prediction function
-def predict_risk(input_data):
-    model = get_model()
-    if not model:
-        return None, None
-    
-    try:
-        features = pd.DataFrame([input_data])[PREDICTION_FEATURES]
-        proba = model.predict_proba(features)[0][1]
-        risk_level = "High" if proba > 0.7 else "Medium" if proba > 0.3 else "Low"
-        return risk_level, proba
-    except Exception as e:
-        st.error(f"Prediction error: {str(e)}")
-        return None, None
+# Initialize session state
+if 'submitted_data' not in st.session_state:
+    st.session_state.submitted_data = pd.DataFrame(columns=PREDICTION_FEATURES + ['Village', 'Date', 'Risk_Level', 'Risk_Probability'])
 
 # Data input form
-def show_input_form():
-    with st.form("risk_form"):
-        st.header("Enter Case Information")
+def input_form():
+    with st.form("prediction_form"):
+        st.header("Case Information")
         
-        # Basic info
-        village = st.text_input("Village Name", "Diokhor")
-        date = st.date_input("Assessment Date", datetime.today())
-        
-        # Health metrics
-        st.subheader("Health Indicators")
-        n_ShInfection = st.number_input("Number of Infections", min_value=0, value=5)
-        mean_ShEgg = st.number_input("Mean Egg Count", min_value=0.0, value=2.5)
-        n_female = st.number_input("Female Population at Risk", min_value=0, value=15)
-        pop = st.number_input("Total Population", min_value=0, value=100)
-        
-        # Environmental factors
-        st.subheader("Environmental Factors")
         col1, col2 = st.columns(2)
+        
         with col1:
+            village = st.text_input("Village Name", "Diokhor")
+            date = st.date_input("Assessment Date", datetime.today())
+            n_ShInfection = st.number_input("Number of Infections", min_value=0, value=5)
+            mean_ShEgg = st.number_input("Mean Egg Count", min_value=0.0, value=2.5)
+            n_female = st.number_input("Female Population", min_value=0, value=15)
+            pop = st.number_input("Total Population", min_value=0, value=100)
+            
+        with col2:
             lake_yn = st.selectbox("Lake Present", ["Yes", "No"])
             distance = st.number_input("Distance to Water (m)", min_value=0, value=500)
             floating_veg = st.selectbox("Floating Vegetation", ["Low", "Medium", "High"])
-        with col2:
             depth = st.number_input("Water Depth (m)", min_value=0.0, value=1.2)
             width_shore = st.number_input("Shore Width (m)", min_value=0.0, value=8.0)
-            circ_score = st.slider("Water Circularity", 0.0, 1.0, 0.6)
-        
-        # Vector information
-        st.subheader("Snail Vector Counts")
-        bulinus = st.number_input("Bulinus Snails", min_value=0, value=15)
-        biomph = st.number_input("Biomph Snails", min_value=0, value=3)
+            bulinus = st.number_input("Bulinus Snail Count", min_value=0, value=15)
+            biomph = st.number_input("Biomph Snail Count", min_value=0, value=3)
+            circ_score = st.slider("Water Circularity Score", 0.0, 1.0, 0.6)
         
         if st.form_submit_button("Assess Risk"):
             input_data = {
+                'Village': village,
+                'Date': date.strftime('%Y-%m-%d'),
                 'n_ShInfection': n_ShInfection,
                 'mean_ShEgg': mean_ShEgg,
                 'n_female': n_female,
@@ -304,29 +271,146 @@ def show_input_form():
                 'width_shore': width_shore,
                 'Bulinus': bulinus,
                 'Biomph': biomph,
-                'circ_score': circ_score,
-                'Village': village,
-                'Date': date
+                'circ_score': circ_score
             }
             
-            risk_level, risk_proba = predict_risk(input_data)
+            model = load_model()
+            if model:
+                try:
+                    features = pd.DataFrame([input_data])[PREDICTION_FEATURES]
+                    proba = model.predict_proba(features)[0][1]
+                    risk_level = "High" if proba > 0.7 else "Medium" if proba > 0.3 else "Low"
+                    
+                    input_data.update({
+                        'Risk_Level': risk_level,
+                        'Risk_Probability': proba
+                    })
+                    
+                    # Add to session data
+                    new_entry = pd.DataFrame([input_data])
+                    st.session_state.submitted_data = pd.concat(
+                        [st.session_state.submitted_data, new_entry],
+                        ignore_index=True
+                    )
+                    
+                    # Display results
+                    risk_class = f"risk-{risk_level.lower()}"
+                    st.markdown(
+                        f'<div class="{risk_class}">'
+                        f'<h3>Risk Assessment: {risk_level}</h3>'
+                        f'<p>Probability: {proba:.1%}</p>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                    
+                    # Show intervention recommendations
+                    show_interventions(risk_level)
+                    
+                except Exception as e:
+                    st.error(f"Prediction error: {str(e)}")
+
+def show_interventions(risk_level):
+    interventions = {
+        "High": [
+            "Immediate mass drug administration (MDA)",
+            "Intensive snail control measures",
+            "Community-wide health education",
+            "Water source improvement",
+            "Weekly monitoring for 4 weeks"
+        ],
+        "Medium": [
+            "Targeted treatment of high-risk groups",
+            "Focal snail control",
+            "Health education sessions",
+            "Improved sanitation",
+            "Monthly monitoring"
+        ],
+        "Low": [
+            "Health education in schools",
+            "Passive surveillance",
+            "Environmental modification",
+            "Quarterly monitoring"
+        ]
+    }
+    
+    st.subheader("Recommended Interventions")
+    for intervention in interventions[risk_level]:
+        st.write(f"- {intervention}")
+
+# Bulk upload
+def bulk_upload():
+    st.subheader("Bulk Data Upload")
+    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
+    
+    if uploaded_file:
+        try:
+            new_data = pd.read_csv(uploaded_file)
             
-            if risk_level:
-                risk_class = f"risk-{risk_level.lower()}"
-                st.markdown(
-                    f'<div class="{risk_class}">'
-                    f'<h2>Risk Assessment: {risk_level}</h2>'
-                    f'<p><strong>Probability:</strong> {risk_proba:.1%}</p>'
-                    f'<p><strong>Village:</strong> {village}</p>'
-                    f'<p><strong>Date:</strong> {date.strftime("%Y-%m-%d")}</p>'
-                    f'</div>',
-                    unsafe_allow_html=True
+            # Validate columns
+            missing_cols = [col for col in PREDICTION_FEATURES if col not in new_data.columns]
+            if missing_cols:
+                st.error(f"Missing required columns: {', '.join(missing_cols)}")
+                return
+            
+            model = load_model()
+            if model:
+                features = new_data[PREDICTION_FEATURES]
+                probas = model.predict_proba(features)[:, 1]
+                new_data['Risk_Level'] = ["High" if p > 0.7 else "Medium" if p > 0.3 else "Low" for p in probas]
+                new_data['Risk_Probability'] = probas
+                
+                # Add metadata if missing
+                if 'Village' not in new_data.columns:
+                    new_data['Village'] = "Unknown"
+                if 'Date' not in new_data.columns:
+                    new_data['Date'] = datetime.today().strftime('%Y-%m-%d')
+                
+                st.session_state.submitted_data = pd.concat(
+                    [st.session_state.submitted_data, new_data],
+                    ignore_index=True
                 )
+                
+                st.success(f"Added {len(new_data)} records!")
+                
+                # Show summary
+                risk_counts = new_data['Risk_Level'].value_counts()
+                st.write("Risk Level Summary:")
+                st.write(risk_counts)
+                
+        except Exception as e:
+            st.error(f"Error processing file: {str(e)}")
+
+# Data display
+def show_data():
+    if not st.session_state.submitted_data.empty:
+        st.subheader("Collected Data")
+        st.dataframe(st.session_state.submitted_data)
+        
+        # Export
+        csv = st.session_state.submitted_data.to_csv(index=False)
+        st.download_button(
+            label="Download Data as CSV",
+            data=csv,
+            file_name="schisto_risk_data.csv",
+            mime="text/csv"
+        )
+    else:
+        st.info("No data submitted yet")
 
 # Main app
 def main():
-    st.title("Schistosomiasis Outbreak Risk Assessment")
-    show_input_form()
+    st.title("🦠 Schistosomiasis Outbreak Risk Prediction")
+    
+    tab1, tab2, tab3 = st.tabs(["New Assessment", "Bulk Upload", "View Data"])
+    
+    with tab1:
+        input_form()
+    
+    with tab2:
+        bulk_upload()
+    
+    with tab3:
+        show_data()
 
 if __name__ == "__main__":
     main()
