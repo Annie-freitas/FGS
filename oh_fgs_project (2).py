@@ -230,14 +230,7 @@ def load_model():
             model = pickle.load(f)
         st.success("Pre-trained model loaded successfully!")
         return model
-    except:
-        st.warning("Using default model - for best results, train with your local data")
-        model = LogisticRegression()
-        # Create dummy data matching the original feature set
-        X_dummy = np.random.rand(100, len(ORIGINAL_FEATURES))
-        y_dummy = (X_dummy.sum(axis=1) > 6).astype(int)
-        model.fit(pd.DataFrame(X_dummy, columns=ORIGINAL_FEATURES), y_dummy)
-        return model
+   
 
 def main():
     st.title("🦠 OH-FGS Risk Prediction System")
@@ -345,17 +338,7 @@ def main():
             ax[0].set_title("Key Risk Factors")
             ax[0].set_ylim(0, 1)
             
-            # Risk gauge
-            ax[1].set_xlim(0, 1)
-            ax[1].set_ylim(0, 1)
-            ax[1].add_patch(plt.Rectangle((0, 0), 1, 0.3, color='green', alpha=0.3))
-            ax[1].add_patch(plt.Rectangle((0, 0.3), 1, 0.4, color='orange', alpha=0.3))
-            ax[1].add_patch(plt.Rectangle((0, 0.7), 1, 0.3, color='red', alpha=0.3))
-            ax[1].plot([risk_score, risk_score], [0, 1], 'k-', lw=3)
-            ax[1].text(risk_score, 1.05, f"{risk_score:.0%}", ha='center')
-            ax[1].set_title("Risk Level Gauge")
-            ax[1].axis('off')
-            
+    
             st.pyplot(fig)
             
             # Intervention recommendations
