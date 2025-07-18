@@ -8,7 +8,6 @@ Original file is located at
 
 IMPORT LIBRARIES
 """
-
 # 2. Import libraries
 import pandas as pd
 import numpy as np
@@ -190,100 +189,93 @@ st.dataframe(pd.DataFrame([evaluate_impact(baseline, follow_up)]))
 # -- coding: utf-8 --
 import streamlit as st
 import pandas as pd
+import numpy as np
+import pickle
 from datetime import datetime
-import tempfile
-import os
+from io import BytesIO
 
-# Set page config - shows immediately
+# Set page config
 st.set_page_config(
     page_title="OH-FGS Risk Prediction",
     page_icon="🦠",
     layout="wide"
 )
 
-# Custom CSS - shows immediately
+# Custom CSS
 st.markdown("""
 <style>
     .risk-high { background-color: #ffdddd; padding: 15px; border-radius: 10px; }
     .risk-medium { background-color: #fff3cd; padding: 15px; border-radius: 10px; }
     .risk-low { background-color: #d4edda; padding: 15px; border-radius: 10px; }
-    .intervention-card { padding: 15px; border-radius: 10px; margin: 10px 0; }
+    .intervention-card { padding: 10px; border-radius: 5px; margin: 5px 0; }
 </style>
 """, unsafe_allow_html=True)
 
-# Prediction features - just a list
-PREDICTION_FEATURES = [
-    'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
-    'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
-    'Biomph', 'circ_score'
-]
-
 # Initialize session state
 if 'submitted_data' not in st.session_state:
-    st.session_state.submitted_data = pd.DataFrame(
-        columns=PREDICTION_FEATURES + ['Village', 'Site', 'Date', 'Risk_Level', 'Risk_Probability']
-    )
+    st.session_state.submitted_data = pd.DataFrame()
 
-# HIDDEN model loading - only when needed
 def _load_model():
-    """Completely hidden model loader"""
     try:
-        import pickle
         with open('schisto_risk_model.pkl', 'rb') as f:
             return pickle.load(f)
-    except Exception:
+    except Exception as e:
+        st.error(f"Model loading failed: {str(e)}")
         return None
 
 def predict_risk(input_data):
-    """Prediction function that secretly loads model"""
     model = _load_model()
-    if not model:
-        st.error("Model unavailable - please ensure 'schisto_risk_model.pkl' exists")
+    if model is None:
         return None, None
     
     try:
-        features = pd.DataFrame([input_data])[PREDICTION_FEATURES]
-        proba = model.predict_proba(features)[0][1]
+        # Create required features
+        input_data['water_contact_risk'] = np.where(input_data['distance'] < 1000, 1, 0)
+        input_data['snail_density'] = input_data['Bulinus'] + input_data['Biomph']
+        
+        # Define features for prediction
+        features = [
+            'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
+            'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
+            'Biomph', 'circ_score', 'water_contact_risk', 'snail_density'
+        ]
+        
+        # Prepare features dataframe
+        X = pd.DataFrame([input_data])[features]
+        
+        # Make prediction
+        proba = model.predict_proba(X)[0][1]
         risk_level = "High" if proba > 0.7 else "Medium" if proba > 0.3 else "Low"
+        
         return risk_level, proba
     except Exception as e:
         st.error(f"Prediction error: {str(e)}")
         return None, None
 
 def get_interventions(risk_level):
-    """Returns recommended interventions based on risk level"""
     interventions = {
         "High": [
-            "Immediate mass drug administration (MDA) with praziquantel",
-            "Intensive snail control measures (mollusciciding)",
-            "Community-wide health education campaign",
-            "Water source improvement or alternative water provision",
-            "Weekly monitoring for 4 weeks"
+            "Immediate mass drug administration (MDA)",
+            "Intensive snail control measures",
+            "Community-wide health education",
+            "Water source improvement",
+            "Weekly monitoring"
         ],
         "Medium": [
             "Targeted treatment of high-risk groups",
-            "Focal snail control in high-transmission areas",
-            "Community health education sessions",
-            "Improved sanitation facilities",
-            "Monthly monitoring for 3 months"
+            "Focal snail control",
+            "Health education sessions",
+            "Improved sanitation",
+            "Monthly monitoring"
         ],
         "Low": [
-            "Health education in schools and community centers",
-            "Passive surveillance through health facilities",
-            "Environmental modification to reduce snail habitats",
+            "Health education in schools",
+            "Passive surveillance",
+            "Environmental modification",
             "Quarterly monitoring"
         ]
     }
     return interventions.get(risk_level, [])
-
-def show_interventions(risk_level):
-    """Displays intervention recommendations"""
-    interventions = get_interventions(risk_level)
-    if interventions:
-        st.subheader("Recommended Interventions")
-        for intervention in interventions:
-            st.markdown(f'<div class="intervention-card">✅ {intervention}</div>', 
-                       unsafe_allow_html=True)
 
 def show_input_form():
     with st.form("risk_form"):
@@ -296,7 +288,7 @@ def show_input_form():
             site = st.text_input("Site Number", "1")
             date = st.date_input("Assessment Date", datetime.today())
             n_ShInfection = st.number_input("Number of Infections", min_value=0, value=5)
-            mean_ShEgg = st.number_input("Mean Egg Count", min_value=0.0, value=2.5)
+            mean_ShEgg = st.number_input("Mean Egg Count", min_value=0.0, value=2.5, step=0.1)
             
         with col2:
             n_female = st.number_input("Female Population", min_value=0, value=15)
@@ -307,12 +299,12 @@ def show_input_form():
         
         col3, col4 = st.columns(2)
         with col3:
-            depth = st.number_input("Water Depth (m)", min_value=0.0, value=1.2)
-            width_shore = st.number_input("Shore Width (m)", min_value=0.0, value=8.0)
+            depth = st.number_input("Water Depth (m)", min_value=0.0, value=1.2, step=0.1)
+            width_shore = st.number_input("Shore Width (m)", min_value=0.0, value=8.0, step=0.1)
         with col4:
             bulinus = st.number_input("Bulinus Snail Count", min_value=0, value=15)
             biomph = st.number_input("Biomph Snail Count", min_value=0, value=3)
-            circ_score = st.slider("Water Circularity Score", 0.0, 1.0, 0.6)
+            circ_score = st.slider("Water Circularity Score", 0.0, 1.0, 0.6, step=0.01)
         
         if st.form_submit_button("Assess Risk"):
             input_data = {
@@ -359,30 +351,49 @@ def show_input_form():
                 )
                 
                 # Show interventions
-                show_interventions(risk_level)
+                st.subheader("Recommended Interventions")
+                for intervention in get_interventions(risk_level):
+                    st.markdown(f'<div class="intervention-card">✅ {intervention}</div>', 
+                              unsafe_allow_html=True)
 
 def bulk_upload():
     st.header("Bulk Data Upload")
     
-    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
+    uploaded_file = st.file_uploader("Upload Excel or CSV file", type=["xlsx", "csv"])
     
     if uploaded_file is not None:
         try:
-            new_data = pd.read_csv(uploaded_file)
+            if uploaded_file.name.endswith('.xlsx'):
+                new_data = pd.read_excel(uploaded_file)
+            else:
+                new_data = pd.read_csv(uploaded_file)
             
-            # Validate columns
-            missing_cols = [col for col in PREDICTION_FEATURES if col not in new_data.columns]
+            # Validate required columns
+            required_cols = [
+                'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
+                'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
+                'Biomph', 'circ_score'
+            ]
+            
+            missing_cols = [col for col in required_cols if col not in new_data.columns]
             if missing_cols:
                 st.error(f"Missing required columns: {', '.join(missing_cols)}")
                 return
             
-            # Make predictions
+            # Process data
             model = _load_model()
             if model:
-                features = new_data[PREDICTION_FEATURES]
-                probas = model.predict_proba(features)[:, 1]
-                new_data['Risk_Level'] = ["High" if p > 0.7 else "Medium" if p > 0.3 else "Low" for p in probas]
+                new_data['water_contact_risk'] = np.where(new_data['distance'] < 1000, 1, 0)
+                new_data['snail_density'] = new_data['Bulinus'] + new_data['Biomph']
+                
+                features = required_cols + ['water_contact_risk', 'snail_density']
+                X = new_data[features]
+                
+                probas = model.predict_proba(X)[:, 1]
                 new_data['Risk_Probability'] = probas
+                new_data['Risk_Level'] = pd.cut(probas, 
+                                              bins=[0, 0.3, 0.7, 1],
+                                              labels=['Low', 'Medium', 'High'])
                 
                 # Add missing metadata if needed
                 for col in ['Village', 'Site', 'Date']:
@@ -394,15 +405,15 @@ def bulk_upload():
                     ignore_index=True
                 )
                 
-                st.success(f"Successfully added {len(new_data)} records!")
+                st.success(f"Successfully processed {len(new_data)} records!")
                 
-                # Show risk distribution
+                # Show summary
+                st.subheader("Risk Distribution")
                 risk_counts = new_data['Risk_Level'].value_counts()
-                st.write("Risk Level Distribution:")
                 st.bar_chart(risk_counts)
                 
                 # Show high-risk alerts
-                high_risk = new_data[new_data['Risk_Level'] == "High"]
+                high_risk = new_data[new_data['Risk_Level'] == 'High']
                 if not high_risk.empty:
                     st.warning(f"⚠️ {len(high_risk)} high-risk locations detected!")
         except Exception as e:
@@ -431,13 +442,16 @@ def data_management():
             )
         
         with col2:
-            # Excel export
-            excel = st.session_state.submitted_data.to_excel(index=False)
+            # Excel export using BytesIO
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                st.session_state.submitted_data.to_excel(writer, index=False)
+            excel_data = output.getvalue()
             st.download_button(
                 label="Download as Excel",
-                data=excel,
+                data=excel_data,
                 file_name="schisto_risk_data.xlsx",
-                mime="application/vnd.ms-excel"
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     else:
         st.info("No data collected yet")
