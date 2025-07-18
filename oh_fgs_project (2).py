@@ -385,11 +385,6 @@ def main():
                             st.write(f"Found {len(high_risk)} high risk locations:")
                             st.dataframe(high_risk[EXPECTED_FEATURES + ['Risk_Probability']])
 
-                        # Create and show map
-                        st.subheader("Risk Map Visualization")
-                        map_fig = create_map(result_df)
-                        if map_fig:
-                            st.plotly_chart(map_fig, use_container_width=True)
 
                         # Download results
                         st.subheader("Download Results")
