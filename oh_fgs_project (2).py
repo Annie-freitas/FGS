@@ -194,71 +194,110 @@ import pickle
 from datetime import datetime
 from io import BytesIO
 
-# Set page config
+# ============================================
+# APP CONFIGURATION
+# ============================================
 st.set_page_config(
-    page_title="OH-FGS Risk Prediction",
+    page_title="OH-FGS Risk Prediction System",
     page_icon="🦠",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Custom CSS
-st.markdown("""
-<style>
-    .risk-high { background-color: #ffdddd; padding: 15px; border-radius: 10px; }
-    .risk-medium { background-color: #fff3cd; padding: 15px; border-radius: 10px; }
-    .risk-low { background-color: #d4edda; padding: 15px; border-radius: 10px; }
-    .intervention-card { padding: 10px; border-radius: 5px; margin: 5px 0; }
-</style>
-""", unsafe_allow_html=True)
+# ============================================
+# CUSTOM STYLING
+# ============================================
+def load_css():
+    st.markdown("""
+    <style>
+        /* Main container */
+        .main {
+            background-color: #f8f9fa;
+        }
+        
+        /* Titles */
+        .title-text {
+            color: #2c3e50;
+            font-weight: 700;
+        }
+        
+        /* Cards */
+        .card {
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background-color: white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        /* Risk indicators */
+        .risk-high { background-color: #ff6b6b; color: white; padding: 10px; border-radius: 5px; }
+        .risk-medium { background-color: #ffd166; color: #2c3e50; padding: 10px; border-radius: 5px; }
+        .risk-low { background-color: #06d6a0; color: white; padding: 10px; border-radius: 5px; }
+        
+        /* Buttons */
+        .stButton>button {
+            background-color: #3498db;
+            color: white;
+            border-radius: 5px;
+            padding: 8px 16px;
+            border: none;
+        }
+        
+        /* Form elements */
+        .stTextInput>div>div>input, .stNumberInput>div>div>input {
+            background-color: #f0f2f6;
+            border-radius: 5px;
+        }
+        
+        /* Tabs */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 10px;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            padding: 10px 20px;
+            border-radius: 5px 5px 0 0;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
-# Initialize session state
-if 'submitted_data' not in st.session_state:
-    st.session_state.submitted_data = pd.DataFrame()
+load_css()
 
-def _load_model():
+# ============================================
+# MODEL MANAGEMENT
+# ============================================
+@st.cache_resource
+def load_model():
     try:
         with open('schisto_risk_model.pkl', 'rb') as f:
             return pickle.load(f)
     except Exception as e:
-        st.error(f"Model loading failed: {str(e)}")
+        st.error(f"⚠️ Model loading failed: {str(e)}")
+        st.info("Please ensure 'schisto_risk_model.pkl' exists in the app directory")
         return None
 
+# ============================================
+# CORE FUNCTIONS
+# ============================================
 def predict_risk(input_data):
-    model = _load_model()
-    if model is None:
+    model = load_model()
+    if not model:
         return None, None
     
     try:
-        # Define features exactly as they were during training
         features = [
             'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
             'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
             'Biomph', 'circ_score'
         ]
         
-        # Prepare input data with only the expected features in correct order
-        X = pd.DataFrame([[
-            input_data['n_ShInfection'],
-            input_data['mean_ShEgg'],
-            input_data['n_female'],
-            input_data['Pop'],
-            input_data['LakeYN'],
-            input_data['distance'],
-            input_data['FloatingVeg'],
-            input_data['Depth'],
-            input_data['width_shore'],
-            input_data['Bulinus'],
-            input_data['Biomph'],
-            input_data['circ_score']
-        ], columns=features)
-        
-        # Make prediction
+        X = pd.DataFrame([input_data])[features]
         proba = model.predict_proba(X)[0][1]
         risk_level = "High" if proba > 0.7 else "Medium" if proba > 0.3 else "Low"
-        
         return risk_level, proba
     except Exception as e:
-        st.error(f"Prediction error: {str(e)}")
+        st.error(f"🔴 Prediction error: {str(e)}")
         return None, None
 
 def get_interventions(risk_level):
@@ -286,40 +325,60 @@ def get_interventions(risk_level):
     }
     return interventions.get(risk_level, [])
 
-def show_input_form():
-    with st.form("risk_form"):
-        st.header("Individual Case Assessment")
+# ============================================
+# PAGE COMPONENTS
+# ============================================
+def show_sidebar():
+    with st.sidebar:
+        st.image("https://via.placeholder.com/150x50?text=OH-FGS", width=150)
+        st.markdown("## Navigation")
+        page = st.radio("", ["Individual Assessment", "Bulk Processing", "Data Management"])
         
-        col1, col2 = st.columns(2)
+        st.markdown("---")
+        st.markdown("### About")
+        st.info("""
+        OH-FGS Risk Prediction System v1.0  
+        Developed for Schistosomiasis Control  
+        © 2023 Public Health Initiative
+        """)
         
-        with col1:
+        return page
+
+def individual_assessment():
+    st.markdown("## 🧑‍⚕️ Individual Case Assessment")
+    with st.expander("ℹ️ Instructions", expanded=False):
+        st.write("Complete all fields below to assess schistosomiasis outbreak risk for a specific location.")
+    
+    with st.form("assessment_form"):
+        cols = st.columns(2)
+        
+        with cols[0]:
+            st.markdown("### Location Details")
             village = st.text_input("Village Name", "Diokhor")
             site = st.text_input("Site Number", "1")
             date = st.date_input("Assessment Date", datetime.today())
+            
+            st.markdown("### Health Indicators")
             n_ShInfection = st.number_input("Number of Infections", min_value=0, value=5)
             mean_ShEgg = st.number_input("Mean Egg Count", min_value=0.0, value=2.5, step=0.1)
-            
-        with col2:
             n_female = st.number_input("Female Population", min_value=0, value=15)
             pop = st.number_input("Total Population", min_value=0, value=100)
+        
+        with cols[1]:
+            st.markdown("### Environmental Factors")
             lake_yn = st.selectbox("Lake Present", ["Yes", "No"])
             distance = st.number_input("Distance to Water (m)", min_value=0, value=500)
             floating_veg = st.selectbox("Floating Vegetation", ["Low", "Medium", "High"])
-        
-        col3, col4 = st.columns(2)
-        with col3:
             depth = st.number_input("Water Depth (m)", min_value=0.0, value=1.2, step=0.1)
             width_shore = st.number_input("Shore Width (m)", min_value=0.0, value=8.0, step=0.1)
-        with col4:
+            
+            st.markdown("### Vector Indicators")
             bulinus = st.number_input("Bulinus Snail Count", min_value=0, value=15)
             biomph = st.number_input("Biomph Snail Count", min_value=0, value=3)
             circ_score = st.slider("Water Circularity Score", 0.0, 1.0, 0.6, step=0.01)
         
-        if st.form_submit_button("Assess Risk"):
+        if st.form_submit_button("🚀 Assess Risk", use_container_width=True):
             input_data = {
-                'Village': village,
-                'Site': site,
-                'Date': date.strftime('%Y-%m-%d'),
                 'n_ShInfection': n_ShInfection,
                 'mean_ShEgg': mean_ShEgg,
                 'n_female': n_female,
@@ -331,149 +390,184 @@ def show_input_form():
                 'width_shore': width_shore,
                 'Bulinus': bulinus,
                 'Biomph': biomph,
-                'circ_score': circ_score
+                'circ_score': circ_score,
+                'Village': village,
+                'Site': site,
+                'Date': date.strftime('%Y-%m-%d')
             }
             
-            risk_level, risk_proba = predict_risk(input_data)
-            
-            if risk_level:
-                input_data.update({
-                    'Risk_Level': risk_level,
-                    'Risk_Probability': risk_proba
-                })
+            with st.spinner("Analyzing risk factors..."):
+                risk_level, risk_proba = predict_risk(input_data)
                 
-                # Add to session data
-                new_entry = pd.DataFrame([input_data])
-                st.session_state.submitted_data = pd.concat(
-                    [st.session_state.submitted_data, new_entry],
-                    ignore_index=True
-                )
-                
-                # Display results
-                risk_class = f"risk-{risk_level.lower()}"
-                st.markdown(
-                    f'<div class="{risk_class}">'
-                    f'<h3>Risk Assessment: {risk_level}</h3>'
-                    f'<p>Probability: {risk_proba:.1%}</p>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-                
-                # Show interventions
-                st.subheader("Recommended Interventions")
-                for intervention in get_interventions(risk_level):
-                    st.markdown(f'<div class="intervention-card">✅ {intervention}</div>', 
-                              unsafe_allow_html=True)
+                if risk_level:
+                    st.session_state.current_assessment = {
+                        **input_data,
+                        'Risk_Level': risk_level,
+                        'Risk_Probability': risk_proba
+                    }
+                    
+                    # Display results
+                    st.markdown("---")
+                    st.markdown("## 📊 Risk Assessment Results")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"### Risk Level: <span class='risk-{risk_level.lower()}'>{risk_level}</span>", 
+                                   unsafe_allow_html=True)
+                        st.metric("Probability", f"{risk_proba:.1%}")
+                        
+                    with col2:
+                        st.metric("Village", village)
+                        st.metric("Site", site)
+                    
+                    # Show interventions
+                    st.markdown("---")
+                    st.markdown("## 🛡️ Recommended Interventions")
+                    for intervention in get_interventions(risk_level):
+                        st.markdown(f"✅ {intervention}")
+                    
+                    # Add to session data
+                    if 'submitted_data' not in st.session_state:
+                        st.session_state.submitted_data = pd.DataFrame()
+                    
+                    new_entry = pd.DataFrame([st.session_state.current_assessment])
+                    st.session_state.submitted_data = pd.concat(
+                        [st.session_state.submitted_data, new_entry],
+                        ignore_index=True
+                    )
 
-def bulk_upload():
-    st.header("Bulk Data Upload")
+def bulk_processing():
+    st.markdown("## 📁 Bulk Data Processing")
+    with st.expander("ℹ️ Instructions", expanded=False):
+        st.write("Upload an Excel or CSV file containing multiple records for batch processing.")
     
-    uploaded_file = st.file_uploader("Upload Excel or CSV file", type=["xlsx", "csv"])
+    uploaded_file = st.file_uploader(
+        "Choose a file", 
+        type=["xlsx", "csv"],
+        accept_multiple_files=False,
+        key="bulk_uploader"
+    )
     
-    if uploaded_file is not None:
+    if uploaded_file:
         try:
             if uploaded_file.name.endswith('.xlsx'):
-                new_data = pd.read_excel(uploaded_file)
+                df = pd.read_excel(uploaded_file)
             else:
-                new_data = pd.read_csv(uploaded_file)
+                df = pd.read_csv(uploaded_file)
             
-            # Validate required columns - only those the model expects
+            # Validate columns
             required_cols = [
                 'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
                 'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
                 'Biomph', 'circ_score'
             ]
             
-            missing_cols = [col for col in required_cols if col not in new_data.columns]
+            missing_cols = [col for col in required_cols if col not in df.columns]
             if missing_cols:
-                st.error(f"Missing required columns: {', '.join(missing_cols)}")
+                st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
                 return
             
-            # Process data
-            model = _load_model()
-            if model:
-                # Only use the features the model was trained with
-                X = new_data[required_cols]
-                
-                probas = model.predict_proba(X)[:, 1]
-                new_data['Risk_Probability'] = probas
-                new_data['Risk_Level'] = pd.cut(probas, 
-                                              bins=[0, 0.3, 0.7, 1],
-                                              labels=['Low', 'Medium', 'High'])
-                
-                # Add missing metadata if needed
-                for col in ['Village', 'Site', 'Date']:
-                    if col not in new_data.columns:
-                        new_data[col] = "Unknown"
-                
-                st.session_state.submitted_data = pd.concat(
-                    [st.session_state.submitted_data, new_data],
-                    ignore_index=True
-                )
-                
-                st.success(f"Successfully processed {len(new_data)} records!")
-                
-                # Show summary
-                st.subheader("Risk Distribution")
-                risk_counts = new_data['Risk_Level'].value_counts()
-                st.bar_chart(risk_counts)
-                
-                # Show high-risk alerts
-                high_risk = new_data[new_data['Risk_Level'] == 'High']
-                if not high_risk.empty:
-                    st.warning(f"⚠️ {len(high_risk)} high-risk locations detected!")
+            st.success(f"✅ Successfully loaded {len(df)} records")
+            
+            if st.button("🔍 Analyze All Records", use_container_width=True):
+                with st.spinner("Processing records..."):
+                    model = load_model()
+                    if model:
+                        X = df[required_cols]
+                        probas = model.predict_proba(X)[:, 1]
+                        df['Risk_Probability'] = probas
+                        df['Risk_Level'] = pd.cut(
+                            probas,
+                            bins=[0, 0.3, 0.7, 1],
+                            labels=['Low', 'Medium', 'High']
+                        )
+                        
+                        # Add missing metadata
+                        for col in ['Village', 'Site', 'Date']:
+                            if col not in df.columns:
+                                df[col] = "Unknown"
+                        
+                        st.session_state.submitted_data = df
+                        st.success("Analysis complete!")
+                        
+                        # Show summary
+                        st.markdown("---")
+                        st.markdown("## 📈 Risk Distribution")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.bar_chart(df['Risk_Level'].value_counts())
+                        
+                        with col2:
+                            risk_counts = df['Risk_Level'].value_counts()
+                            st.metric("High Risk Sites", risk_counts.get('High', 0))
+                            st.metric("Medium Risk Sites", risk_counts.get('Medium', 0))
+                            st.metric("Low Risk Sites", risk_counts.get('Low', 0))
+                        
+                        # Show high risk alerts
+                        high_risk = df[df['Risk_Level'] == 'High']
+                        if not high_risk.empty:
+                            st.warning(f"⚠️ {len(high_risk)} high-risk locations detected!")
+                            
+                            with st.expander("View High Risk Locations", expanded=False):
+                                st.dataframe(high_risk)
+            
         except Exception as e:
-            st.error(f"Error processing file: {str(e)}")
+            st.error(f"❌ Error processing file: {str(e)}")
 
 def data_management():
-    st.header("Data Management")
+    st.markdown("## 💾 Data Management")
     
-    if not st.session_state.submitted_data.empty:
-        st.subheader("Collected Data")
-        st.dataframe(st.session_state.submitted_data)
-        
-        # Export options
-        st.subheader("Export Data")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # CSV export
-            csv = st.session_state.submitted_data.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Download as CSV",
-                data=csv,
-                file_name="schisto_risk_data.csv",
-                mime="text/csv"
-            )
-        
-        with col2:
-            # Excel export using BytesIO
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                st.session_state.submitted_data.to_excel(writer, index=False)
-            excel_data = output.getvalue()
-            st.download_button(
-                label="Download as Excel",
-                data=excel_data,
-                file_name="schisto_risk_data.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-    else:
-        st.info("No data collected yet")
+    if 'submitted_data' not in st.session_state or st.session_state.submitted_data.empty:
+        st.info("ℹ️ No assessment data available. Please complete assessments or upload data.")
+        return
+    
+    st.markdown("### 📋 Collected Data")
+    st.dataframe(st.session_state.submitted_data, use_container_width=True)
+    
+    st.markdown("---")
+    st.markdown("### 📤 Export Options")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Export as CSV**")
+        csv = st.session_state.submitted_data.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name="schisto_risk_data.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    
+    with col2:
+        st.markdown("**Export as Excel**")
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            st.session_state.submitted_data.to_excel(writer, index=False)
+        st.download_button(
+            label="Download Excel",
+            data=output.getvalue(),
+            file_name="schisto_risk_data.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
+# ============================================
+# MAIN APP
+# ============================================
 def main():
-    st.title("🌍 OH-FGS Schistosomiasis Risk Prediction")
+    st.markdown("<h1 class='title-text'>🌍 OH-FGS Schistosomiasis Risk Prediction System</h1>", 
+               unsafe_allow_html=True)
     
-    tab1, tab2, tab3 = st.tabs(["Individual Assessment", "Bulk Upload", "Data Management"])
+    current_page = show_sidebar()
     
-    with tab1:
-        show_input_form()
-    
-    with tab2:
-        bulk_upload()
-    
-    with tab3:
+    if current_page == "Individual Assessment":
+        individual_assessment()
+    elif current_page == "Bulk Processing":
+        bulk_processing()
+    elif current_page == "Data Management":
         data_management()
 
 if __name__ == "__main__":
