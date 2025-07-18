@@ -229,19 +229,28 @@ def predict_risk(input_data):
         return None, None
     
     try:
-        # Create required features
-        input_data['water_contact_risk'] = np.where(input_data['distance'] < 1000, 1, 0)
-        input_data['snail_density'] = input_data['Bulinus'] + input_data['Biomph']
-        
-        # Define features for prediction
+        # Create features exactly as they were during training
         features = [
             'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
             'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
-            'Biomph', 'circ_score', 'water_contact_risk', 'snail_density'
+            'Biomph', 'circ_score'
         ]
         
-        # Prepare features dataframe
-        X = pd.DataFrame([input_data])[features]
+        # Prepare input data with only the expected features
+        X = pd.DataFrame([[
+            input_data['n_ShInfection'],
+            input_data['mean_ShEgg'],
+            input_data['n_female'],
+            input_data['Pop'],
+            input_data['LakeYN'],
+            input_data['distance'],
+            input_data['FloatingVeg'],
+            input_data['Depth'],
+            input_data['width_shore'],
+            input_data['Bulinus'],
+            input_data['Biomph'],
+            input_data['circ_score']
+        ], columns=features)
         
         # Make prediction
         proba = model.predict_proba(X)[0][1]
@@ -368,7 +377,7 @@ def bulk_upload():
             else:
                 new_data = pd.read_csv(uploaded_file)
             
-            # Validate required columns
+            # Validate required columns - only those the model expects
             required_cols = [
                 'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
                 'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
@@ -383,11 +392,8 @@ def bulk_upload():
             # Process data
             model = _load_model()
             if model:
-                new_data['water_contact_risk'] = np.where(new_data['distance'] < 1000, 1, 0)
-                new_data['snail_density'] = new_data['Bulinus'] + new_data['Biomph']
-                
-                features = required_cols + ['water_contact_risk', 'snail_density']
-                X = new_data[features]
+                # Only use the features the model was trained with
+                X = new_data[required_cols]
                 
                 probas = model.predict_proba(X)[:, 1]
                 new_data['Risk_Probability'] = probas
