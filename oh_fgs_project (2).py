@@ -339,7 +339,7 @@ def show_sidebar():
         st.info("""
         OH-FGS Risk Prediction System v1.0  
         Developed for Schistosomiasis Control  
-        © 2023 Public Health Initiative
+        © 2025 Public Health Initiative
         """)
         
         return page
