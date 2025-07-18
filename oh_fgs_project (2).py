@@ -179,9 +179,6 @@ follow_up.update({'risk_score': baseline['risk_score']*0.6,
 print("📈 Intervention Effectiveness:")
 display(pd.DataFrame([evaluate_impact(baseline, follow_up)]))
 
-# Install required libraries
-!pip install streamlit plotly geopandas
-
 import streamlit as st
 import pandas as pd
 import numpy as np
