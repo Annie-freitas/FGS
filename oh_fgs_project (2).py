@@ -194,6 +194,8 @@ import numpy as np
 import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
+import joblib
+from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
@@ -219,13 +221,29 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Initialize models (cached to avoid retraining)
+# Load your actual training data and train models
 @st.cache_resource
-def load_models():
-    # Dummy training data (replace with your actual training data)
-    X_train = np.random.rand(100, 12)
-    y_train = np.random.randint(0, 2, 100)
+def load_models_and_data():
+    # Load your actual training data
+    df = pd.read_excel('OH-FGS.xlsx')  # Replace with your actual data loading method
     
+    # Feature engineering
+    one_health_features = [
+        'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
+        'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
+        'Biomph', 'circ_score'
+    ]
+    
+    df['water_contact_risk'] = np.where(df['distance'] < 1000, 1, 0)
+    df['snail_density'] = df['Bulinus'] + df['Biomph']
+    
+    X = df[one_health_features]
+    y = np.where(df['n_ShInfection'] > 50, 1, 0)
+    
+    # Train/test split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.4, random_state=42)
+    
+    # Train models
     models = {
         "Random Forest": RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42),
         "Decision Tree": DecisionTreeClassifier(random_state=42),
@@ -233,16 +251,16 @@ def load_models():
         "Logistic Regression": LogisticRegression(random_state=42)
     }
     
-    for model in models.values():
+    for name, model in models.items():
         model.fit(X_train, y_train)
     
-    return models
+    return models, X_train, y_train, one_health_features
 
 def main():
     st.title("🦠 OH-FGS Risk Prediction System")
     
-    # Load models
-    models = load_models()
+    # Load models and training data
+    models, X_train, y_train, one_health_features = load_models_and_data()
     
     # Data entry form
     with st.form("data_entry_form"):
@@ -304,12 +322,6 @@ def main():
             df['snail_density'] = df['Bulinus'] + df['Biomph']
             
             # Prepare features for prediction
-            one_health_features = [
-                'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
-                'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
-                'Biomph', 'circ_score'
-            ]
-            
             X = df[one_health_features]
             
             # Get predictions from all models
@@ -380,6 +392,15 @@ def main():
                 - Health education
                 - Basic sanitation improvements
                 """)
+            
+            # Model evaluation metrics
+            st.header("Model Performance")
+            model = models[selected_model]
+            y_pred = model.predict(X_train)
+            y_proba = model.predict_proba(X_train)[:, 1]
+            
+            st.text(f"Classification Report:\n{classification_report(y_train, y_pred)}")
+            st.metric("Training AUC-ROC Score", f"{roc_auc_score(y_train, y_proba):.2f}")
             
         except Exception as e:
             st.error(f"An error occurred during prediction: {str(e)}")
