@@ -24,7 +24,15 @@ import seaborn as sns
 import joblib
 
 # 3. Load dataset (upload your Excel file when prompted)
-df = pd.read_excel('/content/OH-FGS.xlsx')
+import streamlit as st
+import pandas as pd
+
+uploaded_file = st.file_uploader("Upload OH-FGS Excel file", type=["xlsx"])
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+    st.write(df.head())
+else:
+    st.warning("Please upload an Excel file")
 
 # 4. Feature Selection (One Health Approach)
 # Key variables from your dataset + engineered features
