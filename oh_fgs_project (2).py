@@ -210,15 +210,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Load model
-@st.cache_resource
-def load_model():
-    try:
-        with open('schisto_risk_model.pkl', 'rb') as f:
-            return pickle.load(f)
-    except Exception as e:
-        st.error(f"Model loading failed: {str(e)}")
-        return None
+
 
 # Prediction features
 PREDICTION_FEATURES = [
@@ -230,6 +222,16 @@ PREDICTION_FEATURES = [
 # Initialize session state
 if 'submitted_data' not in st.session_state:
     st.session_state.submitted_data = pd.DataFrame(columns=PREDICTION_FEATURES + ['Village', 'Date', 'Risk_Level', 'Risk_Probability'])
+
+# Load model
+@st.cache_resource
+def load_model():
+    try:
+        with open('schisto_risk_model.pkl', 'rb') as f:
+            return pickle.load(f)
+    except Exception as e:
+        st.error(f"Model loading failed: {str(e)}")
+        return None
 
 # Data input form
 def input_form():
