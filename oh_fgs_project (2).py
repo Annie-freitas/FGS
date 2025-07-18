@@ -203,6 +203,13 @@ st.set_page_config(
     layout="wide"
 )
 
+# Original feature names the model expects
+ORIGINAL_FEATURES = [
+    'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
+    'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
+    'Biomph', 'circ_score'
+]
+
 # Custom CSS
 st.markdown("""
     <style>
@@ -215,22 +222,22 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Load pre-trained model (or create a simple one if not available)
+# Load pre-trained model
 @st.cache_resource
 def load_model():
     try:
-        # Try to load your pre-trained model
         with open('schisto_risk_model.pkl', 'rb') as f:
             model = pickle.load(f)
+        st.success("Pre-trained model loaded successfully!")
+        return model
     except:
-        # Fallback to a simple trained model if the file isn't found
         st.warning("Using default model - for best results, train with your local data")
         model = LogisticRegression()
-        # Create some dummy data to fit the model
-        X_dummy = np.random.rand(100, 12)  # 12 features
-        y_dummy = (X_dummy.sum(axis=1) > 6).astype(int)  # Simple threshold
-        model.fit(X_dummy, y_dummy)
-    return model
+        # Create dummy data matching the original feature set
+        X_dummy = np.random.rand(100, len(ORIGINAL_FEATURES))
+        y_dummy = (X_dummy.sum(axis=1) > 6).astype(int)
+        model.fit(pd.DataFrame(X_dummy, columns=ORIGINAL_FEATURES), y_dummy)
+        return model
 
 def main():
     st.title("🦠 OH-FGS Risk Prediction System")
@@ -238,7 +245,7 @@ def main():
     # Load model
     model = load_model()
     
-    # Data entry form - simplified version
+    # Data entry form
     with st.form("risk_prediction_form"):
         st.header("Enter Location Parameters")
         
@@ -257,11 +264,15 @@ def main():
             distance = st.number_input("Distance to Water (meters)", min_value=0, value=500)
             FloatingVeg = st.slider("Floating Vegetation Index", 0.0, 1.0, 0.75)
             Depth = st.number_input("Water Depth (meters)", min_value=0.0, value=1.2)
+            width_shore = st.number_input("Shoreline Width (meters)", min_value=0.0, value=5.5)
             
         st.subheader("Vector Factors")
-        Bulinus = st.number_input("Bulinus Snail Count", min_value=0, value=30)
-        Biomph = st.number_input("Biomph Snail Count", min_value=0, value=15)
-        circ_score = st.slider("Water Body Circularity (0=irregular, 1=circular)", 0.0, 1.0, 0.6)
+        col3, col4 = st.columns(2)
+        with col3:
+            Bulinus = st.number_input("Bulinus Snail Count", min_value=0, value=30)
+            Biomph = st.number_input("Biomph Snail Count", min_value=0, value=15)
+        with col4:
+            circ_score = st.slider("Water Body Circularity (0=irregular, 1=circular)", 0.0, 1.0, 0.6)
         
         location_name = st.text_input("Location Name", value="Village A")
         
@@ -269,7 +280,7 @@ def main():
     
     if submitted:
         try:
-            # Prepare input data
+            # Prepare input data with ONLY the original features
             input_data = {
                 'n_ShInfection': n_ShInfection,
                 'mean_ShEgg': mean_ShEgg,
@@ -279,20 +290,16 @@ def main():
                 'distance': distance,
                 'FloatingVeg': FloatingVeg,
                 'Depth': Depth,
-                'width_shore': 5.5,  # Default value
+                'width_shore': width_shore,
                 'Bulinus': Bulinus,
                 'Biomph': Biomph,
                 'circ_score': circ_score
             }
             
-            # Convert to dataframe
-            X = pd.DataFrame([input_data])
+            # Convert to dataframe with correct feature order
+            X = pd.DataFrame([input_data], columns=ORIGINAL_FEATURES)
             
-            # Add engineered features
-            X['water_contact_risk'] = np.where(X['distance'] < 1000, 1, 0)
-            X['snail_density'] = X['Bulinus'] + X['Biomph']
-            
-            # Get prediction
+            # Get prediction (using only original features)
             risk_score = float(model.predict_proba(X)[:, 1][0])
             
             # Display results
@@ -317,20 +324,26 @@ def main():
                 </div>
             """, unsafe_allow_html=True)
             
+            # Calculate derived features for visualization only
+            snail_density = Bulinus + Biomph
+            water_contact_risk = 1 if distance < 1000 else 0
+            
             # Visualization section
             st.header("Risk Visualization")
             
             fig, ax = plt.subplots(1, 2, figsize=(15, 5))
             
-            # Risk factors bar chart
+            # Risk factors bar chart (using original + derived for display)
             risk_factors = {
-                'Human Health': n_ShInfection/100 + mean_ShEgg/50 + n_female/200 + Pop/1000,
-                'Environment': (1 if LakeYN == "Yes" else 0) + (1 - distance/2000) + FloatingVeg + Depth/5,
-                'Vector': (Bulinus + Biomph)/50 + circ_score
+                'Infections': n_ShInfection/100,
+                'Egg Burden': mean_ShEgg/50,
+                'Population': Pop/1000,
+                'Water Contact': water_contact_risk,
+                'Snail Density': snail_density/50
             }
             sns.barplot(x=list(risk_factors.keys()), y=list(risk_factors.values()), ax=ax[0])
-            ax[0].set_title("Risk Factor Contributions")
-            ax[0].set_ylim(0, 3)
+            ax[0].set_title("Key Risk Factors")
+            ax[0].set_ylim(0, 1)
             
             # Risk gauge
             ax[1].set_xlim(0, 1)
@@ -358,11 +371,6 @@ def main():
                 - Community-wide health education campaign
                 """)
                 
-                # Map visualization placeholder
-                st.subheader("High Risk Area Map")
-                st.image("https://maps.googleapis.com/maps/api/staticmap?center=14.5,-17.5&zoom=8&size=600x300&maptype=roadmap&markers=color:red|14.5,-17.5&key=YOUR_KEY", 
-                         caption="High risk area identified (red marker)")
-                
             elif risk_level == "Medium":
                 st.info("""
                 **⚠️ Recommended Actions:**
@@ -373,10 +381,6 @@ def main():
                 - Monthly monitoring
                 """)
                 
-                st.subheader("Risk Area Map")
-                st.image("https://maps.googleapis.com/maps/api/staticmap?center=14.5,-17.5&zoom=8&size=600x300&maptype=roadmap&markers=color:orange|14.5,-17.5&key=YOUR_KEY", 
-                         caption="Medium risk area identified (orange marker)")
-                
             else:
                 st.success("""
                 **🟢 Preventive Measures:**
@@ -385,14 +389,13 @@ def main():
                 - Annual screening program
                 - Community awareness activities
                 """)
-                
-                st.subheader("Low Risk Area Map")
-                st.image("https://maps.googleapis.com/maps/api/staticmap?center=14.5,-17.5&zoom=8&size=600x300&maptype=roadmap&markers=color:green|14.5,-17.5&key=YOUR_KEY", 
-                         caption="Low risk area identified (green marker)")
             
             # Data summary
             st.header("Input Summary")
-            st.dataframe(X.iloc[:, :12])  # Show first 12 features
+            display_data = input_data.copy()
+            display_data['snail_density'] = snail_density
+            display_data['water_contact_risk'] = water_contact_risk
+            st.dataframe(pd.DataFrame([display_data]))
             
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
