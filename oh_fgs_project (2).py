@@ -192,9 +192,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
+import matplotlib.pyplot as plt
 from datetime import datetime
-import tempfile
-import os
+from sklearn.metrics import classification_report
 
 # Set page config
 st.set_page_config(
@@ -207,218 +207,283 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
-    .main {background-color: #f5f5f5;}
-    .stAlert {padding: 20px; border-radius: 10px;}
-    .high-risk {background-color: #ffcccc; padding: 10px; border-radius: 5px;}
-    .medium-risk {background-color: #fff3cd; padding: 10px; border-radius: 5px;}
-    .low-risk {background-color: #d4edda; padding: 10px; border-radius: 5px;}
-    .header {color: #2c3e50;}
-    .stTextInput>div>div>input {background-color: #f0f2f6;}
+    .risk-high { color: red; font-weight: bold; }
+    .risk-medium { color: orange; }
+    .risk-low { color: green; }
+    .debug-info { font-family: monospace; background: #f5f5f5; padding: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-# Load model
+# Load model with validation
 @st.cache_resource
 def load_model():
     try:
         with open('schisto_risk_model.pkl', 'rb') as f:
             model = pickle.load(f)
-        return model
+            
+            # Validate model structure
+            if not hasattr(model, 'predict_proba'):
+                st.error("Invalid model: Missing predict_proba method")
+                return None
+                
+            return model
     except Exception as e:
-        st.error(f"Failed to load model: {str(e)}")
+        st.error(f"Model loading failed: {str(e)}")
         return None
 
 model = load_model()
 
-# Expected features
-FEATURES = [
-    'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
-    'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
-    'Biomph', 'circ_score', 'Village', 'Site', 'Date'
-]
+# Feature information
+FEATURES = {
+    'n_ShInfection': {'type': 'int', 'min': 0, 'default': 10, 'desc': 'Number of infected individuals'},
+    'mean_ShEgg': {'type': 'float', 'min': 0, 'default': 5.2, 'desc': 'Average egg count per infection'},
+    'n_female': {'type': 'int', 'min': 0, 'default': 15, 'desc': 'Number of females in population'},
+    'Pop': {'type': 'int', 'min': 0, 'default': 200, 'desc': 'Total population'},
+    'LakeYN': {'type': 'binary', 'options': ['No', 'Yes'], 'default': 'Yes', 'desc': 'Presence of lake'},
+    'distance': {'type': 'int', 'min': 0, 'default': 500, 'desc': 'Distance to water (meters)'},
+    'FloatingVeg': {'type': 'category', 'options': ['Low', 'Medium', 'High'], 'default': 'Medium', 'desc': 'Vegetation density'},
+    'Depth': {'type': 'float', 'min': 0, 'default': 1.5, 'desc': 'Water depth (meters)'},
+    'width_shore': {'type': 'float', 'min': 0, 'default': 10.0, 'desc': 'Shoreline width (meters)'},
+    'Bulinus': {'type': 'int', 'min': 0, 'default': 20, 'desc': 'Bulinus snail count'},
+    'Biomph': {'type': 'int', 'min': 0, 'default': 5, 'desc': 'Biomphalaria snail count'},
+    'circ_score': {'type': 'float', 'min': 0, 'max': 1, 'default': 0.7, 'desc': 'Water circularity score'}
+}
 
-# Initialize session state for data storage
+# Risk thresholds (adjustable)
+DEFAULT_THRESHOLDS = {
+    'low': 0.3,
+    'medium': 0.7,
+    'high': 1.0
+}
+
+# Initialize session state
 if 'saved_data' not in st.session_state:
-    st.session_state.saved_data = pd.DataFrame(columns=FEATURES + ['Risk_Level', 'Risk_Probability'])
+    st.session_state.saved_data = pd.DataFrame(columns=list(FEATURES.keys()) + ['Village', 'Site', 'Date', 'Risk_Level', 'Risk_Probability'])
+if 'thresholds' not in st.session_state:
+    st.session_state.thresholds = DEFAULT_THRESHOLDS
 
-# Data entry form
+# Model validation function
+def validate_model(input_data):
+    results = {}
+    
+    # Check feature importance
+    if hasattr(model, 'feature_importances_'):
+        fig, ax = plt.subplots()
+        pd.Series(model.feature_importances_, index=input_data.columns).plot.bar(ax=ax)
+        ax.set_title("Feature Importance")
+        results['feature_importance'] = fig
+    
+    # Generate sample predictions
+    sample_data = {
+        'low_risk': input_data.mean() * 0.5,
+        'medium_risk': input_data.mean(),
+        'high_risk': input_data.mean() * 2
+    }
+    
+    sample_preds = {}
+    for name, values in sample_data.items():
+        sample_preds[name] = model.predict_proba(pd.DataFrame([values]))[0][1]
+    
+    results['sample_predictions'] = sample_preds
+    
+    return results
+
+# Prediction function with debugging
+def predict_risk(features, debug=False):
+    try:
+        # Convert to DataFrame if single sample
+        if isinstance(features, dict):
+            features = pd.DataFrame([features])
+        
+        # Ensure correct feature order
+        features = features[list(FEATURES.keys())]
+        
+        # Get probabilities
+        proba = model.predict_proba(features)[:, 1]
+        
+        # Apply thresholds
+        risk_levels = []
+        for p in proba:
+            if p <= st.session_state.thresholds['low']:
+                risk_levels.append("Low")
+            elif p <= st.session_state.thresholds['medium']:
+                risk_levels.append("Medium")
+            else:
+                risk_levels.append("High")
+        
+        if debug:
+            debug_info = {
+                'input_features': features.iloc[0].to_dict(),
+                'probability': proba[0],
+                'risk_level': risk_levels[0],
+                'thresholds': st.session_state.thresholds
+            }
+            return risk_levels[0], proba[0], debug_info
+        
+        return risk_levels, proba
+    
+    except Exception as e:
+        st.error(f"Prediction failed: {str(e)}")
+        return None
+
+# Individual entry form
 def individual_entry_form():
+    with st.expander("🧪 Test Example Data", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("Low Risk Example"):
+                st.session_state.example = 'low'
+        with col2:
+            if st.button("Medium Risk Example"):
+                st.session_state.example = 'medium'
+        with col3:
+            if st.button("High Risk Example"):
+                st.session_state.example = 'high'
+
     with st.form("individual_entry"):
         st.subheader("Individual Data Entry")
         
+        # Dynamic form based on FEATURES dict
+        inputs = {}
         cols = st.columns(3)
-        with cols[0]:
-            village = st.text_input("Village Name", "Diokhor")
-            site = st.text_input("Site Number", "1")
-            date = st.date_input("Date", datetime.today())
-            n_ShInfection = st.number_input("Number of Infections", min_value=0, value=10)
-            mean_ShEgg = st.number_input("Mean Egg Count", min_value=0.0, value=5.2)
+        col_idx = 0
         
-        with cols[1]:
-            n_female = st.number_input("Number of Females", min_value=0, value=15)
-            pop = st.number_input("Population", min_value=0, value=200)
-            lake_yn = st.selectbox("Lake Present", ["Yes", "No"], index=0)
-            distance = st.number_input("Distance to Water (m)", min_value=0, value=500)
-            floating_veg = st.selectbox("Floating Vegetation", ["Low", "Medium", "High"], index=1)
+        for feature, config in FEATURES.items():
+            with cols[col_idx % 3]:
+                if config['type'] == 'int':
+                    inputs[feature] = st.number_input(
+                        f"{feature} ({config['desc']})",
+                        min_value=config['min'],
+                        value=config['default']
+                    )
+                elif config['type'] == 'float':
+                    inputs[feature] = st.number_input(
+                        f"{feature} ({config['desc']})",
+                        min_value=config.get('min', 0.0),
+                        max_value=config.get('max', None),
+                        value=config['default'],
+                        step=0.1
+                    )
+                elif config['type'] == 'binary':
+                    inputs[feature] = 1 if st.selectbox(
+                        f"{feature} ({config['desc']})",
+                        options=config['options'],
+                        index=config['options'].index(config['default'])
+                    ) == "Yes" else 0
+                elif config['type'] == 'category':
+                    inputs[feature] = st.selectbox(
+                        f"{feature} ({config['desc']})",
+                        options=config['options'],
+                        index=config['options'].index(config['default'])
+                    )
+                    # Convert to numerical (simple encoding)
+                    inputs[feature] = config['options'].index(inputs[feature]) + 1
+                
+                col_idx += 1
         
-        with cols[2]:
-            depth = st.number_input("Water Depth (m)", min_value=0.0, value=1.5)
-            width_shore = st.number_input("Shore Width (m)", min_value=0.0, value=10.0)
-            bulinus = st.number_input("Bulinus Count", min_value=0, value=20)
-            biomph = st.number_input("Biomph Count", min_value=0, value=5)
-            circ_score = st.number_input("Circularity Score", min_value=0.0, max_value=1.0, value=0.7)
+        # Metadata
+        inputs['Village'] = st.text_input("Village Name", "Diokhor")
+        inputs['Site'] = st.text_input("Site Number", "1")
+        inputs['Date'] = st.date_input("Date", datetime.today())
         
         submitted = st.form_submit_button("Submit & Predict")
         
         if submitted:
-            # Prepare data
-            data = {
-                'Village': village,
-                'Site': site,
-                'Date': date.strftime('%Y-%m-%d'),
-                'n_ShInfection': n_ShInfection,
-                'mean_ShEgg': mean_ShEgg,
-                'n_female': n_female,
-                'Pop': pop,
-                'LakeYN': 1 if lake_yn == "Yes" else 0,
-                'distance': distance,
-                'FloatingVeg': ["Low", "Medium", "High"].index(floating_veg) + 1,
-                'Depth': depth,
-                'width_shore': width_shore,
-                'Bulinus': bulinus,
-                'Biomph': biomph,
-                'circ_score': circ_score
-            }
+            # Convert FloatingVeg to numerical
+            if 'FloatingVeg' in inputs and isinstance(inputs['FloatingVeg'], str):
+                inputs['FloatingVeg'] = ['Low', 'Medium', 'High'].index(inputs['FloatingVeg']) + 1
             
-            # Make prediction
-            features = pd.DataFrame([data])[FEATURES[:-3]]  # Exclude metadata columns
-            proba = model.predict_proba(features)[0][1]
-            risk_level = "High" if proba > 0.7 else "Medium" if proba > 0.3 else "Low"
+            # Make prediction with debugging
+            risk_level, proba, debug_info = predict_risk(inputs, debug=True)
+            
+            # Display results
+            st.subheader("Prediction Results")
+            risk_class = f"risk-{risk_level.lower()}"
+            st.markdown(f"### Risk Level: <span class='{risk_class}'>{risk_level}</span>", unsafe_allow_html=True)
+            st.markdown(f"Probability: **{proba:.2%}**")
             
             # Add to session data
-            data.update({
+            inputs.update({
                 'Risk_Level': risk_level,
                 'Risk_Probability': proba
             })
+            st.session_state.saved_data = pd.concat([
+                st.session_state.saved_data,
+                pd.DataFrame([inputs])
+            ], ignore_index=True)
             
-            new_row = pd.DataFrame([data])
-            st.session_state.saved_data = pd.concat([st.session_state.saved_data, new_row], ignore_index=True)
-            
-            # Show result
-            st.success("Data submitted successfully!")
-            st.write(f"Predicted Risk: **{risk_level}** (Probability: {proba:.2%})")
+            # Debug info
+            with st.expander("🔍 Debug Information"):
+                st.json(debug_info)
 
-# File upload function
-def bulk_upload():
-    st.subheader("Bulk Data Upload")
-    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
+# Model validation tab
+def validation_tab():
+    st.subheader("Model Validation")
     
-    if uploaded_file is not None:
-        try:
-            new_data = pd.read_csv(uploaded_file)
-            
-            # Validate columns
-            missing_cols = [col for col in FEATURES[:-3] if col not in new_data.columns]
-            if missing_cols:
-                st.error(f"Missing required columns: {', '.join(missing_cols)}")
-                return
-            
-            # Make predictions
-            features = new_data[FEATURES[:-3]]
-            probas = model.predict_proba(features)[:, 1]
-            risk_levels = ["High" if p > 0.7 else "Medium" if p > 0.3 else "Low" for p in probas]
-            
-            # Add to session data
-            new_data['Risk_Level'] = risk_levels
-            new_data['Risk_Probability'] = probas
-            
-            # Add missing metadata columns if needed
-            for col in ['Village', 'Site', 'Date']:
-                if col not in new_data.columns:
-                    new_data[col] = "Unknown"
-            
-            st.session_state.saved_data = pd.concat([st.session_state.saved_data, new_data], ignore_index=True)
-            st.success(f"Successfully added {len(new_data)} records!")
-            
-        except Exception as e:
-            st.error(f"Error processing file: {str(e)}")
-
-# DHIS2 export format
-def format_for_dhis2(df):
-    dhis2_format = df.copy()
+    # Threshold adjustment
+    st.markdown("### Risk Thresholds")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.session_state.thresholds['low'] = st.slider(
+            "Low Risk Threshold", 
+            0.0, 1.0, st.session_state.thresholds['low'], 0.05
+        )
+    with col2:
+        st.session_state.thresholds['medium'] = st.slider(
+            "Medium Risk Threshold", 
+            st.session_state.thresholds['low'], 1.0, st.session_state.thresholds['medium'], 0.05
+        )
+    with col3:
+        st.session_state.thresholds['high'] = 1.0  # Fixed upper bound
     
-    # Add required DHIS2 columns
-    dhis2_format['orgUnit'] = dhis2_format['Village']
-    dhis2_format['period'] = pd.to_datetime(dhis2_format['Date']).dt.strftime('%Y%m')
-    dhis2_format['dataSet'] = 'SCHISTO_RISK'
+    # Generate test cases
+    st.markdown("### Test Cases")
+    test_cases = pd.DataFrame({
+        'n_ShInfection': [10, 30, 60],
+        'mean_ShEgg': [5, 15, 30],
+        'Bulinus': [5, 20, 50],
+        'distance': [1000, 500, 100]
+    })
     
-    # Map to DHIS2 data elements
-    indicator_mapping = {
-        'n_ShInfection': 'SCHISTO_CASES',
-        'Bulinus': 'SNAIL_COUNT_BULINUS',
-        'Risk_Level': 'RISK_LEVEL',
-        'Risk_Probability': 'RISK_SCORE'
-    }
+    # Add predictions
+    test_cases['Risk_Probability'] = model.predict_proba(test_cases)[:, 1]
+    test_cases['Risk_Level'] = predict_risk(test_cases)[0]
     
-    # Create DHIS2 compatible format
-    melted = pd.melt(dhis2_format, 
-                    id_vars=['orgUnit', 'period', 'dataSet', 'Site'],
-                    value_vars=list(indicator_mapping.keys()),
-                    var_name='dataElement',
-                    value_name='value')
-    
-    # Map to DHIS2 element codes
-    melted['dataElement'] = melted['dataElement'].map(indicator_mapping)
-    
-    return melted[['dataElement', 'period', 'orgUnit', 'dataSet', 'Site', 'value']]
+    st.dataframe(test_cases.style.applymap(
+        lambda x: 'background-color: #ffcccc' if x == 'High' else 
+                 ('background-color: #fff3cd' if x == 'Medium' else 'background-color: #d4edda'),
+        subset=['Risk_Level']
+    ))
 
 # Main app
 def main():
-    st.title("🌍 OH-FGS Schistosomiasis Risk Prediction")
+    st.title("🔬 OH-FGS Risk Prediction with Validation")
     
-    tab1, tab2, tab3 = st.tabs(["Individual Entry", "Bulk Upload", "Saved Data"])
+    tab1, tab2, tab3 = st.tabs(["Data Entry", "Model Validation", "Collected Data"])
     
     with tab1:
         individual_entry_form()
     
     with tab2:
-        bulk_upload()
+        if model is not None:
+            validation_tab()
+        else:
+            st.error("Model not loaded - cannot validate")
     
     with tab3:
         st.subheader("Collected Data")
-        
         if not st.session_state.saved_data.empty:
             st.dataframe(st.session_state.saved_data)
             
             # Export options
-            st.subheader("Export Data")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                # CSV export
-                csv = st.session_state.saved_data.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Download Full Data (CSV)",
-                    data=csv,
-                    file_name=f"schisto_data_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
-            
-            with col2:
-                # DHIS2 export
-                if st.button("Prepare DHIS2 Export"):
-                    dhis2_data = format_for_dhis2(st.session_state.saved_data)
-                    csv_dhis2 = dhis2_data.to_csv(index=False).encode('utf-8')
-                    
-                    st.download_button(
-                        label="Download DHIS2 Format",
-                        data=csv_dhis2,
-                        file_name=f"schisto_dhis2_export_{datetime.now().strftime('%Y%m%d')}.csv",
-                        mime="text/csv"
-                    )
-                    st.write("DHIS2 compatible format ready for import")
+            st.download_button(
+                label="Download Data",
+                data=st.session_state.saved_data.to_csv(index=False),
+                file_name="schisto_data.csv",
+                mime="text/csv"
+            )
         else:
-            st.info("No data collected yet. Use the Individual Entry or Bulk Upload tabs to add data.")
+            st.info("No data collected yet")
 
 if __name__ == "__main__":
     main()
