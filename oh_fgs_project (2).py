@@ -187,157 +187,7 @@ follow_up.update({'risk_score': baseline['risk_score']*0.6,
 print("📈 Intervention Effectiveness:")
 st.dataframe(pd.DataFrame([evaluate_impact(baseline, follow_up)]))
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import pickle
-import plotly.express as px
-import geopandas as gpd
-from shapely.geometry import Point
-import tempfile
-import os
-
-# Set page config
-st.set_page_config(
-    page_title="AI OH-FGS Predict",
-    page_icon="🦠",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Custom CSS for styling
-st.markdown("""
-    <style>
-        .main {
-            background-color: #f5f5f5;
-        }
-        .stAlert {
-            padding: 20px;
-            border-radius: 10px;
-        }
-        .high-risk {
-            background-color: #ffcccc;
-            padding: 10px;
-            border-radius: 5px;
-            margin: 5px 0;
-        }
-        .medium-risk {
-            background-color: #fff3cd;
-            padding: 10px;
-            border-radius: 5px;
-            margin: 5px 0;
-        }
-        .low-risk {
-            background-color: #d4edda;
-            padding: 10px;
-            border-radius: 5px;
-            margin: 5px 0;
-        }
-        .header {
-            color: #2c3e50;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-# Load the trained model
-@st.cache_resource
-def load_model():
-    with open('schisto_risk_model.pkl', 'rb') as f:
-        model = pickle.load(f)
-    return model
-
-model = load_model()
-
-# Expected feature names based on your model
-EXPECTED_FEATURES = [
-    'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
-    'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
-    'Biomph', 'circ_score'
-]
-
-# Function to process uploaded data
-def process_data(uploaded_file):
-    try:
-        df = pd.read_csv(uploaded_file)
-
-        # Check if required columns are present
-        missing_cols = [col for col in EXPECTED_FEATURES if col not in df.columns]
-        if missing_cols:
-            st.error(f"Missing required columns in the dataset: {', '.join(missing_cols)}")
-            return None
-
-        return df
-    except Exception as e:
-        st.error(f"Error reading file: {str(e)}")
-        return None
-
-# Function to make predictions
-def make_predictions(df):
-    try:
-        # Prepare features
-        features = df[EXPECTED_FEATURES]
-
-        # Make predictions
-        predictions = model.predict(features)
-        probabilities = model.predict_proba(features)[:, 1]  # Probability of positive class
-
-        # Add to dataframe
-        df['Risk_Prediction'] = predictions
-        df['Risk_Probability'] = probabilities
-
-        # Add risk level based on probability
-        df['Risk_Level'] = pd.cut(
-            df['Risk_Probability'],
-            bins=[0, 0.3, 0.7, 1],
-            labels=['Low', 'Medium', 'High'],
-            include_lowest=True
-        )
-
-        return df
-    except Exception as e:
-        st.error(f"Error making predictions: {str(e)}")
-        return None
-
-# Function to create map visualization
-def create_map(df):
-    try:
-        # Check if we have coordinates - assuming 'latitude' and 'longitude' columns
-        if 'latitude' not in df.columns or 'longitude' not in df[['longitude']].columns:
-            st.warning("No latitude/longitude columns found for mapping.")
-            return None
-
-        # Create a GeoDataFrame
-        geometry = [Point(xy) for xy in zip(df['longitude'], df['latitude'])]
-        gdf = gpd.GeoDataFrame(df, geometry=geometry)
-
-        # Create interactive plot
-        fig = px.scatter_mapbox(
-            gdf,
-            lat='latitude',
-            lon='longitude',
-            color='Risk_Level',
-            color_discrete_map={
-                'Low': 'green',
-                'Medium': 'orange',
-                'High': 'red'
-            },
-            hover_name='Risk_Level',
-            hover_data=EXPECTED_FEATURES,
-            zoom=10,
-            height=600,
-            title='Schistosomiasis Risk Distribution'
-        )
-
-        fig.update_layout(
-            mapbox_style="open-street-map",
-            margin={"r":0,"t":40,"l":0,"b":0},
-            hovermode='closest'
-        )
-
-        return fig
-    except Exception as e:
-        st.error(f"Error creating map: {str(e)}")
-        return None
+# ... (keep all your previous code until the last part)
 
 # Main app
 def main():
@@ -385,21 +235,15 @@ def main():
                             st.write(f"Found {len(high_risk)} high risk locations:")
                             st.dataframe(high_risk[EXPECTED_FEATURES + ['Risk_Probability']])
 
-
                         # Download results
                         st.subheader("Download Results")
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp:
-                            result_df.to_csv(tmp.name, index=False)
-                            with open(tmp.name, 'rb') as f:
-                                st.download_button(
-                                    label="Download Predictions",
-                                    data=f,
-                                    file_name="schisto_risk_predictions.csv",
-                                    mime="text/csv"
-                                )
-                            os.unlink(tmp.name)
-        else:
-            st.error("Please check your data format and try again.")
+                        csv = result_df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="Download Predictions",
+                            data=csv,
+                            file_name="schisto_risk_predictions.csv",
+                            mime="text/csv"
+                        )
 
     # Sidebar with information
     st.sidebar.title("About")
@@ -421,8 +265,8 @@ def main():
         - Biomph
         - circ_score
 
-        For best results, include latitude/longitude columns for mapping.
+        For mapping functionality, include latitude/longitude columns.
     """)
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()
