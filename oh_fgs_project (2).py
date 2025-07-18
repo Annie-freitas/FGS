@@ -185,7 +185,7 @@ follow_up.update({'risk_score': baseline['risk_score']*0.6,
                  'Bulinus': baseline['Bulinus']*0.5})
 
 print("📈 Intervention Effectiveness:")
-display(pd.DataFrame([evaluate_impact(baseline, follow_up)]))
+st.dataframe(pd.DataFrame([evaluate_impact(baseline, follow_up)]))
 
 import streamlit as st
 import pandas as pd
