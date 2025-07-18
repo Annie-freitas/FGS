@@ -194,8 +194,6 @@ import numpy as np
 import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
-import joblib
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
@@ -218,14 +216,43 @@ st.markdown("""
         .low-risk { background-color: #d4edda; padding: 10px; border-radius: 5px; }
         .stNumberInput > div > div > input {background-color: #f0f2f6;}
         .stTextInput > div > div > input {background-color: #f0f2f6;}
+        .stSelectbox > div > div {background-color: #f0f2f6;}
     </style>
 """, unsafe_allow_html=True)
+
+# Initialize models with your actual trained models
+@st.cache_resource
+def load_models():
+    # Load your pre-trained models
+    models = {
+        "Random Forest": RandomForestClassifier(n_estimators=100, class_weight='balanced', random_state=42),
+        "Decision Tree": DecisionTreeClassifier(random_state=42),
+        "XGBoost": XGBClassifier(random_state=42),
+        "Logistic Regression": LogisticRegression(random_state=42)
+    }
+    
+    # Load your actual trained models here (example using pickle)
+    # Replace with your actual model loading code
+    try:
+        with open('schisto_risk_model.pkl', 'rb') as f:
+            models["Logistic Regression"] = pickle.load(f)
+    except:
+        st.warning("Could not load saved models, using default initialized models")
+    
+    return models
 
 def main():
     st.title("🦠 OH-FGS Risk Prediction System")
     
-    # Load models and training data
-    models, X_train, y_train, one_health_features = load_models_and_data()
+    # Load models
+    models = load_models()
+    
+    # Define feature names
+    one_health_features = [
+        'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
+        'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
+        'Biomph', 'circ_score'
+    ]
     
     # Data entry form
     with st.form("data_entry_form"):
@@ -235,28 +262,30 @@ def main():
         
         with col1:
             st.subheader("Human Health Factors")
-            n_ShInfection = st.number_input("Number of Infections (n_ShInfection)", min_value=0)
-            mean_ShEgg = st.number_input("Mean Egg Burden (mean_ShEgg)", min_value=0.0, format="%.2f")
-            n_female = st.number_input("Number of Females (n_female)", min_value=0)
-            Pop = st.number_input("Population Density (Pop)", min_value=0)
+            n_ShInfection = st.number_input("Number of Infections (n_ShInfection)", min_value=0, value=25)
+            mean_ShEgg = st.number_input("Mean Egg Burden (mean_ShEgg)", min_value=0.0, value=10.5, format="%.2f")
+            n_female = st.number_input("Number of Females (n_female)", min_value=0, value=15)
+            Pop = st.number_input("Population Density (Pop)", min_value=0, value=200)
             
         with col2:
             st.subheader("Environmental Factors")
-            LakeYN = st.selectbox("Lake Presence (LakeYN)", [0, 1], format_func=lambda x: "Yes" if x == 1 else "No")
-            distance = st.number_input("Distance to Water (meters)", min_value=0)
-            FloatingVeg = st.number_input("Floating Vegetation Index", min_value=0.0, format="%.2f")
-            Depth = st.number_input("Water Depth", min_value=0.0, format="%.2f")
-            width_shore = st.number_input("Shoreline Width", min_value=0.0, format="%.2f")
+            LakeYN = st.selectbox("Lake Presence (LakeYN)", [0, 1], format_func=lambda x: "Yes" if x == 1 else "No", index=1)
+            distance = st.number_input("Distance to Water (meters)", min_value=0, value=500)
+            FloatingVeg = st.number_input("Floating Vegetation Index", min_value=0.0, value=0.75, format="%.2f")
+            Depth = st.number_input("Water Depth (meters)", min_value=0.0, value=1.2, format="%.2f")
+            width_shore = st.number_input("Shoreline Width (meters)", min_value=0.0, value=5.5, format="%.2f")
             
         st.subheader("Animal/Vector Factors")
         col3, col4 = st.columns(2)
         with col3:
-            Bulinus = st.number_input("Bulinus Snail Count", min_value=0)
-            Biomph = st.number_input("Biomph Snail Count", min_value=0)
+            Bulinus = st.number_input("Bulinus Snail Count", min_value=0, value=30)
+            Biomph = st.number_input("Biomph Snail Count", min_value=0, value=15)
         with col4:
-            circ_score = st.number_input("Water Body Circularity Score", min_value=0.0, max_value=1.0, format="%.2f")
-            village = st.text_input("Village Name")
-            site = st.text_input("Site ID")
+            circ_score = st.number_input("Water Body Circularity Score (0-1)", 
+                                       min_value=0.0, max_value=1.0, value=0.6, format="%.2f",
+                                       help="1 = perfect circle, 0 = highly irregular")
+            village = st.text_input("Village Name", value="Sample Village")
+            site = st.text_input("Site ID", value="Site-01")
         
         submitted = st.form_submit_button("Predict Risk")
     
@@ -290,31 +319,34 @@ def main():
             X = df[one_health_features]
             
             # Get predictions from all models
+            results = {}
             for name, model in models.items():
-                # Ensure the prediction is numeric before formatting
-                risk_score = model.predict_proba(X)[:, 1][0]
-                df[f'{name}_risk_score'] = float(risk_score)  # Explicitly convert to float
+                try:
+                    risk_score = float(model.predict_proba(X)[:, 1][0])
+                    results[name] = risk_score
+                except Exception as e:
+                    st.error(f"Error with {name} model: {str(e)}")
+                    results[name] = None
             
             # Display results
             st.success("Prediction completed!")
             
-            # Show risk scores - ensure numeric formatting
+            # Show risk scores
             st.header("Risk Scores")
-            risk_cols = [col for col in df.columns if 'risk_score' in col]
-            
-            # Create a copy for display with formatted percentages
-            display_df = df[['Village', 'Site'] + risk_cols].copy()
-            for col in risk_cols:
-                display_df[col] = display_df[col].apply(lambda x: f"{float(x):.2%}")
-            
-            st.dataframe(display_df)
+            risk_df = pd.DataFrame.from_dict(results, orient='index', columns=['Risk Score'])
+            risk_df['Risk Score'] = risk_df['Risk Score'].apply(lambda x: f"{x:.2%}" if x is not None else "N/A")
+            st.dataframe(risk_df)
             
             # Risk assessment
             st.header("Risk Assessment")
-            selected_model = st.selectbox("Select model for assessment", list(models.keys()))
+            selected_model = st.selectbox("Select model for detailed assessment", list(models.keys()))
             
-            risk_score = float(df[f'{selected_model}_risk_score'].values[0])  # Ensure float
+            risk_score = results.get(selected_model)
             
+            if risk_score is None:
+                st.warning("No valid prediction available for selected model")
+                return
+                
             if risk_score > 0.7:
                 risk_level = "High"
                 risk_class = "high-risk"
@@ -341,39 +373,37 @@ def main():
                 st.pyplot(fig)
             
             # Intervention planning
-            st.header("Intervention Planning")
-            st.write("Based on the risk factors, consider these interventions:")
-            
+            st.header("Recommended Interventions")
             if risk_level == "High":
-                st.write("""
-                - Immediate snail control measures
-                - Mass drug administration
-                - Community education on water contact
-                - Improved sanitation infrastructure
-                - Regular monitoring
+                st.warning("""
+                **Immediate Actions Required:**
+                - Conduct mass drug administration (MDA) campaign
+                - Implement snail control measures (chemical/biological)
+                - Distribute water filters to households
+                - Organize community education sessions
+                - Increase monitoring frequency (weekly)
                 """)
             elif risk_level == "Medium":
-                st.write("""
-                - Targeted snail control
-                - School-based treatment programs
-                - Community awareness campaigns
-                - Water source protection
+                st.info("""
+                **Recommended Actions:**
+                - Targeted treatment of high-risk groups
+                - Environmental modification to reduce snail habitats
+                - School-based health education
+                - Improve sanitation facilities
+                - Monthly monitoring
                 """)
             else:
-                st.write("""
-                - Routine surveillance
-                - Health education
+                st.success("""
+                **Preventive Measures:**
+                - Routine health education
                 - Basic sanitation improvements
+                - Annual screening
+                - Community awareness programs
                 """)
             
-            # Model evaluation metrics
-            st.header("Model Performance")
-            model = models[selected_model]
-            y_pred = model.predict(X_train)
-            y_proba = model.predict_proba(X_train)[:, 1]
-            
-            st.text(f"Classification Report:\n{classification_report(y_train, y_pred)}")
-            st.metric("Training AUC-ROC Score", f"{roc_auc_score(y_train, y_proba):.2f}")
+            # Detailed location information
+            st.header("Location Details")
+            st.dataframe(df[['Village', 'Site', 'n_ShInfection', 'Bulinus', 'distance']])
             
         except Exception as e:
             st.error(f"An error occurred during prediction: {str(e)}")
