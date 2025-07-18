@@ -229,14 +229,14 @@ def predict_risk(input_data):
         return None, None
     
     try:
-        # Create features exactly as they were during training
+        # Define features exactly as they were during training
         features = [
             'n_ShInfection', 'mean_ShEgg', 'n_female', 'Pop', 'LakeYN',
             'distance', 'FloatingVeg', 'Depth', 'width_shore', 'Bulinus',
             'Biomph', 'circ_score'
         ]
         
-        # Prepare input data with only the expected features
+        # Prepare input data with only the expected features in correct order
         X = pd.DataFrame([[
             input_data['n_ShInfection'],
             input_data['mean_ShEgg'],
